@@ -293,8 +293,9 @@ class UsageTray:
             stale_after_seconds=max(120, next_poll_seconds(self.config) * 2),
         )
         if fetch_error:
-            prefix = "refresh failed · "
-            title = (prefix + title)[:127]
+            title = f"refresh failed · {title}"
+        # Windows tray tooltip practical limit.
+        title = title[:127]
         # Serialize Win32 notify updates; pystray has no public schedule API.
         with self._state_lock:
             self.icon.icon = image

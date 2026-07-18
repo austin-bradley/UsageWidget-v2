@@ -5,26 +5,88 @@ from core.models import AppConfig, AppSnapshot, AccountSnapshot
 from providers.registry import get_provider
 
 
+_AUTH_ERROR_MARKERS = (
+    "not logged in",
+    "not signed in",
+    "signed out",
+    "auth ",
+    "auth.",
+    "auth,",
+    "authentication",
+    "unauthorized",
+    "forbidden",
+    "credentials",
+    "access token",
+    "token not found",
+    "token expired",
+    "login",
+    "log in",
+    "sign in",
+    "api_key",
+    "api key",
+    "401",
+    "403",
+)
+
+
+def is_auth_error(error: str | None) -> bool:
+    """True when the failure likely means credentials are gone/invalid."""
+    if not error:
+        return False
+    text = error.casefold()
+    return any(marker in text for marker in _AUTH_ERROR_MARKERS)
+
+
 def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
-    """Keep prior metrics/plan/login when an account fails; surface the new error."""
+    """Merge polls with auth-aware last-good retention.
+
+    - Auth/login errors: do **not** keep stale meters (show failure clearly).
+    - Transient errors: keep prior metrics/plan, surface the new error.
+    - Empty successful parses: keep prior metrics (avoid flipping to "?").
+    """
     prev_by_id = {a.account_id: a for a in previous.accounts}
     merged: list[AccountSnapshot] = []
     for acct in new.accounts:
         prev = prev_by_id.get(acct.account_id)
-        if acct.error is not None and prev is not None and prev.metrics:
+
+        if acct.error is not None:
+            if is_auth_error(acct.error) or prev is None or not prev.metrics:
+                merged.append(acct)
+            else:
+                merged.append(
+                    AccountSnapshot(
+                        account_id=acct.account_id,
+                        provider_id=acct.provider_id,
+                        display_name=acct.display_name,
+                        logged_in=prev.logged_in,
+                        plan=prev.plan if prev.plan is not None else acct.plan,
+                        metrics=list(prev.metrics),
+                        error=acct.error,
+                    )
+                )
+            continue
+
+        # Soft empty success: keep last meters rather than blanking the icon.
+        if (
+            not acct.metrics
+            and prev is not None
+            and prev.metrics
+            and not prev.error
+        ):
             merged.append(
                 AccountSnapshot(
                     account_id=acct.account_id,
                     provider_id=acct.provider_id,
-                    display_name=acct.display_name,
-                    logged_in=prev.logged_in,
-                    plan=prev.plan if prev.plan is not None else acct.plan,
+                    display_name=acct.display_name or prev.display_name,
+                    logged_in=acct.logged_in if acct.logged_in else prev.logged_in,
+                    plan=acct.plan if acct.plan is not None else prev.plan,
                     metrics=list(prev.metrics),
-                    error=acct.error,
+                    error=None,
                 )
             )
-        else:
-            merged.append(acct)
+            continue
+
+        merged.append(acct)
     return AppSnapshot(fetched_at=new.fetched_at, accounts=merged)
 
 
