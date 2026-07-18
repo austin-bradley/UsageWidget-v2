@@ -26,6 +26,10 @@ def config_path() -> Path:
 
 def example_config_path() -> Path:
     if getattr(sys, "frozen", False):
+        # One-file PyInstaller extracts bundled datas into _MEIPASS.
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass) / "config.example.yaml"
         return Path(sys.executable).parent / "config.example.yaml"
     return Path(__file__).resolve().parent.parent / "config.example.yaml"
 
