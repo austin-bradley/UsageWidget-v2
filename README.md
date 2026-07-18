@@ -105,7 +105,7 @@ If auth or endpoints aren’t ready, the account degrades to a clear error and d
 
 ## Tray menu
 
-Show details · Refresh now · Display profile · Accounts · Always visible · Open config · Reload config · Open log · Quit
+Show details · Refresh now · Display profile · Accounts · Always visible · Open config · Reload config · Reset config to example · Open log · Quit
 
 ## Autostart (optional)
 
