@@ -27,6 +27,35 @@ from display.tooltip import build_tooltip
 from tray.win_notify import get_always_visible, set_always_visible
 
 
+def _set_clipboard_text(text: str) -> None:
+    """Copy Unicode text to the Windows clipboard (CF_UNICODETEXT)."""
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    CF_UNICODETEXT = 13
+    GMEM_MOVEABLE = 0x0002
+    if not user32.OpenClipboard(0):
+        raise OSError("OpenClipboard failed")
+    try:
+        user32.EmptyClipboard()
+        payload = text.encode("utf-16-le") + b"\x00\x00"
+        handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(payload))
+        if not handle:
+            raise OSError("GlobalAlloc failed")
+        locked = kernel32.GlobalLock(handle)
+        if not locked:
+            kernel32.GlobalFree(handle)
+            raise OSError("GlobalLock failed")
+        try:
+            ctypes.memmove(locked, payload, len(payload))
+        finally:
+            kernel32.GlobalUnlock(handle)
+        if not user32.SetClipboardData(CF_UNICODETEXT, handle):
+            kernel32.GlobalFree(handle)
+            raise OSError("SetClipboardData failed")
+    finally:
+        user32.CloseClipboard()
+
+
 class UsageTray:
     def __init__(self, config: AppConfig):
         self.config = config
@@ -76,8 +105,23 @@ class UsageTray:
             pystray.MenuItem("Reload config", self._on_reload_config),
             pystray.MenuItem("Reset config to example", self._on_reset_config),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Copy details to clipboard", self._on_copy_details),
             pystray.MenuItem("Open log", self._on_open_log),
         )
+
+    def _on_copy_details(self, icon, item):
+        profile = get_active_profile(self.config)
+        with self._state_lock:
+            snapshot = self.snapshot
+            fetch_error = self._last_fetch_error
+        text = build_details(profile, snapshot)
+        if fetch_error:
+            text = f"Last refresh failed: {fetch_error}\n\n{text}"
+        try:
+            _set_clipboard_text(text)
+            log_event("details copied to clipboard")
+        except Exception as e:
+            self._show_messagebox(f"Couldn't copy details:\n{e}")
 
     def _profile_menu(self):
         items = []
@@ -97,9 +141,12 @@ class UsageTray:
     def _accounts_menu(self):
         items = []
         for account in self.config.accounts:
+            label = account.label or account.id
+            if account.provider and account.provider not in label.casefold():
+                label = f"{label}  ·  {account.provider}"
             items.append(
                 pystray.MenuItem(
-                    account.label or account.id,
+                    label,
                     self._make_account_handler(account.id),
                     checked=lambda item, aid=account.id: self._is_account_enabled(aid),
                 )
