@@ -58,15 +58,17 @@ profiles:
       slots:
         - ref: claude-personal.session
           show: percent_and_reset
-          label: P
+          label: S
     tooltip:
       format: compact
       max_chars: 127
       slots:
         - ref: claude-personal.session
           show: percent_and_reset
+          label: Session
         - ref: claude-personal.week
           show: percent
+          label: Week
     details:
       show: all_enabled_accounts
       group_by: account

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
 import threading
 import time
 from datetime import datetime
@@ -44,6 +45,7 @@ class UsageTray:
         menu = pystray.Menu(
             pystray.MenuItem("Show details", self._on_details, default=True),
             pystray.MenuItem("Refresh now", self._on_refresh),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("Display profile", pystray.Menu(self._profile_menu)),
             pystray.MenuItem("Accounts", pystray.Menu(self._accounts_menu)),
             pystray.MenuItem(
@@ -51,19 +53,34 @@ class UsageTray:
                 self._on_toggle_visible,
                 checked=lambda item: get_always_visible(),
             ),
-            pystray.MenuItem("Open config", self._on_open_config),
-            pystray.MenuItem("Reload config", self._on_reload_config),
-            pystray.MenuItem("Reset config to example", self._on_reset_config),
-            pystray.MenuItem("Open log", self._on_open_log),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Settings", pystray.Menu(self._settings_menu)),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._on_quit),
         )
         log_event(f"tray start ({len(config.accounts)} accounts configured)")
         profile = get_active_profile(self.config)
+        initial_title = build_tooltip(
+            profile,
+            self.snapshot,
+            stale_after_seconds=max(120, next_poll_seconds(config) * 2),
+        )
+        if not self.snapshot.accounts:
+            initial_title = f"{self.config.app_name}: starting…"
         self.icon = pystray.Icon(
             "usage-widget",
             render_icon(profile, self.snapshot, self._rotate_index),
-            f"{self.config.app_name}: loading…",
+            initial_title[:127],
             menu,
+        )
+
+    def _settings_menu(self):
+        return pystray.Menu(
+            pystray.MenuItem("Open config", self._on_open_config),
+            pystray.MenuItem("Reload config", self._on_reload_config),
+            pystray.MenuItem("Reset config to example", self._on_reset_config),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Open log", self._on_open_log),
         )
 
     def _profile_menu(self):
@@ -174,8 +191,6 @@ class UsageTray:
         ):
             return
         try:
-            import shutil
-
             if not example.exists():
                 raise FileNotFoundError(f"Example config not found: {example}")
             path.parent.mkdir(parents=True, exist_ok=True)

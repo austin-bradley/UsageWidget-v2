@@ -61,7 +61,11 @@ def format_slot(
     elif show == "used_of_limit":
         if metric.used is not None and metric.limit is not None:
             if metric.unit == "usd":
-                return f"${metric.used:g}/${metric.limit:g}"
+                used = f"${metric.used:.0f}" if compact else f"${metric.used:g}"
+                limit = f"${metric.limit:.0f}" if compact else f"${metric.limit:g}"
+                return f"{used}/{limit}"
+            if compact:
+                return f"{metric.used:.0f}/{metric.limit:.0f}"
             return f"{metric.used:g}/{metric.limit:g}"
         return "?" if pct is None else f"{pct}%"
     return "?" if pct is None else str(pct)

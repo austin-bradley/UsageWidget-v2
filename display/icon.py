@@ -11,15 +11,17 @@ from display.format_value import format_slot, resolve_metric
 RGBA = tuple[int, int, int, int]
 ResolvedSlot = tuple[DisplaySlot, Metric]
 
-_BACKGROUND: RGBA = (30, 30, 30, 255)
-_TRACK: RGBA = (58, 58, 58, 255)
-_MUTED: RGBA = (140, 140, 140, 255)
-_TEXT: RGBA = (238, 238, 238, 255)
+_BACKGROUND: RGBA = (28, 28, 30, 255)
+_TRACK: RGBA = (52, 52, 56, 255)
+_MUTED: RGBA = (142, 142, 147, 255)
+_TEXT: RGBA = (245, 245, 247, 255)
+_DIVIDER: RGBA = (72, 72, 76, 255)
 
 
 def _find_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     for path in (
         r"C:\Windows\Fonts\segoeuib.ttf",
+        r"C:\Windows\Fonts\seguisb.ttf",
         r"C:\Windows\Fonts\arialbd.ttf",
     ):
         try:
@@ -33,10 +35,10 @@ def _color_for_pct(pct: int | None, thresholds: dict[str, int]) -> RGBA:
     if pct is None:
         return _MUTED
     if pct >= thresholds.get("critical", 85):
-        return (224, 90, 90, 255)
+        return (255, 99, 97, 255)
     if pct >= thresholds.get("warn", 60):
-        return (224, 180, 70, 255)
-    return (110, 200, 120, 255)
+        return (255, 199, 87, 255)
+    return (52, 199, 89, 255)
 
 
 def _color_for_metric(
@@ -49,10 +51,6 @@ def _color_for_metric(
     pct = metric.used_pct
     if pct is None:
         return _MUTED
-    if color_by == "remaining_pct":
-        # Thresholds still mean "usage pressure": low remaining → red.
-        # Equivalent to coloring by used_pct (remaining 10% ≈ used 90%).
-        return _color_for_pct(pct, thresholds)
     return _color_for_pct(pct, thresholds)
 
 
@@ -111,6 +109,22 @@ def _draw_centered_text(
     draw.text((x, y), text, font=font, fill=color)
 
 
+def _draw_status_ring(
+    draw: ImageDraw.ImageDraw,
+    color: RGBA,
+    *,
+    inset: int = 3,
+) -> None:
+    # Soft outer ring so single-digit icons still read as "metered".
+    ring = (*color[:3], 210)
+    draw.rounded_rectangle(
+        (inset, inset, 64 - inset, 64 - inset),
+        radius=13,
+        outline=ring,
+        width=2,
+    )
+
+
 def _draw_value(
     draw: ImageDraw.ImageDraw,
     box: tuple[int, int, int, int],
@@ -122,10 +136,10 @@ def _draw_value(
     color = _color_for_metric(metric, profile.icon.color_by, profile.icon.thresholds)
     value_top = box[1]
     if profile.icon.show_labels:
-        label = slot.label or metric.label
-        label_box = (box[0], box[1] + 2, box[2], box[1] + 16)
-        _draw_centered_text(draw, label_box, label, _TEXT, 11)
-        value_top = box[1] + 14
+        label = (slot.label or metric.label)[:3]
+        label_box = (box[0], box[1] + 1, box[2], box[1] + 14)
+        _draw_centered_text(draw, label_box, label, _MUTED, 10)
+        value_top = box[1] + 12
     _draw_centered_text(
         draw,
         (box[0], value_top, box[2], box[3]),
@@ -142,11 +156,15 @@ def _draw_split(
 ) -> None:
     visible = list(items[:2])
     if len(visible) == 1:
-        _draw_value(draw, (3, 3, 61, 61), visible[0], profile, 38)
+        color = _color_for_metric(
+            visible[0][1], profile.icon.color_by, profile.icon.thresholds
+        )
+        _draw_status_ring(draw, color)
+        _draw_value(draw, (4, 4, 60, 60), visible[0], profile, 36)
         return
-    draw.line((32, 7, 32, 57), fill=(76, 76, 76, 255), width=1)
-    _draw_value(draw, (3, 3, 32, 61), visible[0], profile, 24)
-    _draw_value(draw, (33, 3, 61, 61), visible[1], profile, 24)
+    draw.line((32, 10, 32, 54), fill=_DIVIDER, width=1)
+    _draw_value(draw, (4, 4, 31, 60), visible[0], profile, 22)
+    _draw_value(draw, (33, 4, 60, 60), visible[1], profile, 22)
 
 
 def _draw_stacked_bars(
@@ -155,23 +173,23 @@ def _draw_stacked_bars(
     profile: DisplayProfile,
 ) -> None:
     visible = list(items[:3])
-    row_height = 54 // len(visible)
+    row_height = 52 // len(visible)
     font = _find_font(min(11, max(8, row_height - 6)))
     for index, (slot, metric) in enumerate(visible):
-        top = 5 + index * row_height
-        bottom = min(59, top + row_height - 4)
-        draw.rounded_rectangle((5, top, 59, bottom), radius=4, fill=_TRACK)
+        top = 6 + index * row_height
+        bottom = min(58, top + row_height - 4)
+        draw.rounded_rectangle((6, top, 58, bottom), radius=5, fill=_TRACK)
         pct = metric.used_pct
         if pct is not None:
-            fill_right = 5 + round(54 * max(0, min(100, pct)) / 100)
-            if fill_right > 5:
+            fill_right = 6 + round(52 * max(0, min(100, pct)) / 100)
+            if fill_right > 6:
                 draw.rounded_rectangle(
-                    (5, top, fill_right, bottom),
-                    radius=4,
+                    (6, top, fill_right, bottom),
+                    radius=5,
                     fill=_color_for_pct(pct, profile.icon.thresholds),
                 )
         value = format_slot(slot, metric, compact=True)
-        prefix = f"{slot.label or metric.label} " if profile.icon.show_labels else ""
+        prefix = f"{(slot.label or metric.label)[:3]} " if profile.icon.show_labels else ""
         text = f"{prefix}{value}"
         bounds = draw.textbbox((0, 0), text, font=font)
         text_width = bounds[2] - bounds[0]
@@ -193,20 +211,20 @@ def _draw_badge_grid(
     profile: DisplayProfile,
 ) -> None:
     visible = list(items[:4])
-    boxes = (
-        (3, 3, 31, 31),
-        (33, 3, 61, 31),
-        (3, 33, 61, 61) if len(visible) == 3 else (3, 33, 31, 61),
-        (33, 33, 61, 61),
-    )
     if len(visible) == 3:
-        # Bottom row spans full width for the third badge.
-        _draw_value(draw, boxes[0], visible[0], profile, 16)
-        _draw_value(draw, boxes[1], visible[1], profile, 16)
-        _draw_value(draw, (3, 33, 61, 61), visible[2], profile, 16)
+        _draw_value(draw, (4, 4, 30, 30), visible[0], profile, 15)
+        _draw_value(draw, (34, 4, 60, 30), visible[1], profile, 15)
+        _draw_value(draw, (4, 34, 60, 60), visible[2], profile, 16)
+        draw.line((32, 6, 32, 28), fill=_DIVIDER, width=1)
+        draw.line((6, 32, 58, 32), fill=_DIVIDER, width=1)
         return
+    boxes = ((4, 4, 30, 30), (34, 4, 60, 30), (4, 34, 30, 60), (34, 34, 60, 60))
     for index, item in enumerate(visible):
-        _draw_value(draw, boxes[index], item, profile, 16)
+        _draw_value(draw, boxes[index], item, profile, 15)
+    if len(visible) >= 2:
+        draw.line((32, 6, 32, 58), fill=_DIVIDER, width=1)
+    if len(visible) >= 3:
+        draw.line((6, 32, 58, 32), fill=_DIVIDER, width=1)
 
 
 def render_icon(
@@ -220,22 +238,31 @@ def render_icon(
 
     items = _resolved_slots(profile, snapshot)
     if not items:
-        # Prefer "!" when accounts reported errors (auth/setup), else "?".
         has_error = any(account.error for account in snapshot.accounts)
+        color = (255, 99, 97, 255) if has_error else _MUTED
+        _draw_status_ring(draw, color)
         _draw_centered_text(
             draw,
-            (3, 3, 61, 61),
-            "!" if has_error else "?",
-            (224, 90, 90, 255) if has_error else _MUTED,
+            (4, 4, 60, 60),
+            "!" if has_error else "·",
+            color,
             40,
         )
         return image
 
     if profile.icon.mode == "rotate":
         selected = items[rotate_index % len(items)]
-        _draw_value(draw, (3, 3, 61, 61), selected, profile, 38)
+        color = _color_for_metric(
+            selected[1], profile.icon.color_by, profile.icon.thresholds
+        )
+        _draw_status_ring(draw, color)
+        _draw_value(draw, (4, 4, 60, 60), selected, profile, 36)
     elif profile.icon.mode == "single" or profile.icon.layout == "primary_only":
-        _draw_value(draw, (3, 3, 61, 61), items[0], profile, 38)
+        color = _color_for_metric(
+            items[0][1], profile.icon.color_by, profile.icon.thresholds
+        )
+        _draw_status_ring(draw, color)
+        _draw_value(draw, (4, 4, 60, 60), items[0], profile, 36)
     elif profile.icon.mode == "composite" and profile.icon.layout == "stacked_bars":
         _draw_stacked_bars(draw, items, profile)
     elif profile.icon.mode == "composite" and profile.icon.layout == "badge_grid":

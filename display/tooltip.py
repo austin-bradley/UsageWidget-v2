@@ -19,14 +19,22 @@ def build_tooltip(
             continue
         _, metric = match
         label = slot.label or metric.label
+        # Keep tooltip labels short.
+        if len(label) > 10 and " " in label:
+            label = label.split()[0]
         pieces.append(f"{label} {format_slot(slot, metric)}")
 
     if not pieces:
-        tooltip = "Usage unavailable"
+        if any(account.error for account in snapshot.accounts):
+            tooltip = "Usage unavailable"
+        elif not snapshot.accounts:
+            tooltip = "No accounts enabled"
+        else:
+            tooltip = "Loading…"
     elif profile.tooltip.format == "lines":
         tooltip = "\n".join(pieces)
     else:
-        tooltip = " | ".join(pieces)
+        tooltip = " · ".join(pieces)
 
     if stale_after_seconds and snapshot.accounts:
         age = (datetime.now() - snapshot.fetched_at.replace(tzinfo=None)).total_seconds()
