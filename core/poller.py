@@ -1,3 +1,4 @@
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -26,8 +27,12 @@ _AUTH_ERROR_MARKERS = (
     "sign in",
     "api_key",
     "api key",
-    "401",
-    "403",
+)
+
+# Avoid bare "401"/"403" digit matches inside unrelated numbers/ids.
+_AUTH_STATUS_RE = re.compile(
+    r"(?:^|[\s:;\(\[\{])(?:http\s*)?(?:status\s*)?(?:error\s*)?40[13](?:\b|[\s:;\.,\)\]\}]|$)",
+    re.IGNORECASE,
 )
 
 
@@ -36,7 +41,9 @@ def is_auth_error(error: str | None) -> bool:
     if not error:
         return False
     text = error.casefold()
-    return any(marker in text for marker in _AUTH_ERROR_MARKERS)
+    if any(marker in text for marker in _AUTH_ERROR_MARKERS):
+        return True
+    return bool(_AUTH_STATUS_RE.search(error))
 
 
 def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
@@ -69,18 +76,15 @@ def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
             continue
 
         # Soft empty success: keep last meters rather than blanking the icon.
-        if (
-            not acct.metrics
-            and prev is not None
-            and prev.metrics
-            and not prev.error
-        ):
+        # Also clears a prior transient error when the latest poll "succeeded"
+        # with no parseable meters.
+        if not acct.metrics and prev is not None and prev.metrics:
             merged.append(
                 AccountSnapshot(
                     account_id=acct.account_id,
                     provider_id=acct.provider_id,
                     display_name=acct.display_name or prev.display_name,
-                    logged_in=acct.logged_in if acct.logged_in else prev.logged_in,
+                    logged_in=acct.logged_in,
                     plan=acct.plan if acct.plan is not None else prev.plan,
                     metrics=list(prev.metrics),
                     error=None,
