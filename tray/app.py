@@ -33,7 +33,17 @@ def _set_clipboard_text(text: str) -> None:
     kernel32 = ctypes.windll.kernel32
     CF_UNICODETEXT = 13
     GMEM_MOVEABLE = 0x0002
-    if not user32.OpenClipboard(0):
+
+    kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+    user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    user32.SetClipboardData.restype = ctypes.c_void_p
+
+    if not user32.OpenClipboard(None):
         raise OSError("OpenClipboard failed")
     try:
         user32.EmptyClipboard()
@@ -52,6 +62,7 @@ def _set_clipboard_text(text: str) -> None:
         if not user32.SetClipboardData(CF_UNICODETEXT, handle):
             kernel32.GlobalFree(handle)
             raise OSError("SetClipboardData failed")
+        # Clipboard owns the handle after a successful SetClipboardData.
     finally:
         user32.CloseClipboard()
 
