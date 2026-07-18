@@ -112,7 +112,7 @@ def _draw_value(
     _draw_centered_text(
         draw,
         (box[0], value_top, box[2], box[3]),
-        format_slot(slot, metric),
+        format_slot(slot, metric, compact=True),
         color,
         start_size,
     )
@@ -153,7 +153,7 @@ def _draw_stacked_bars(
                     radius=4,
                     fill=_color_for_pct(pct, profile.icon.thresholds),
                 )
-        value = format_slot(slot, metric)
+        value = format_slot(slot, metric, compact=True)
         prefix = f"{slot.label or metric.label} " if profile.icon.show_labels else ""
         text = f"{prefix}{value}"
         bounds = draw.textbbox((0, 0), text, font=font)

@@ -1,4 +1,4 @@
-"""Always-visible tray-icon helpers (ported unchanged from v1)."""
+"""Always-visible tray-icon helpers (ported from v1, path matching fixed)."""
 from __future__ import annotations
 
 import os
@@ -8,12 +8,35 @@ import winreg
 NOTIFY_ICON_SETTINGS = r"Control Panel\NotifyIconSettings"
 
 
+def _candidate_executable_paths() -> list[str]:
+    """Paths Explorer may have stored as NotifyIconSettings ExecutablePath.
+
+    Frozen builds register as the .exe. Source runs register as python.exe /
+    pythonw.exe (not this module's __file__).
+    """
+    paths: list[str] = []
+    for raw in (sys.executable, sys.argv[0] if sys.argv else None):
+        if not raw:
+            continue
+        try:
+            paths.append(os.path.normcase(os.path.abspath(raw)))
+        except OSError:
+            continue
+    # Preserve order, drop duplicates
+    seen: set[str] = set()
+    unique: list[str] = []
+    for path in paths:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
+
+
 def _notify_icon_key():
-    """Find this exe's entry under Windows 11's tray-icon settings. The key is
-    created by Explorer the first time the icon appears, and keyed by the exe
-    path that registered it."""
-    me = os.path.normcase(os.path.abspath(
-        sys.executable if getattr(sys, "frozen", False) else __file__))
+    """Find this process's entry under Windows 11's tray-icon settings."""
+    candidates = _candidate_executable_paths()
+    if not candidates:
+        return None
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, NOTIFY_ICON_SETTINGS) as root:
         i = 0
         while True:
@@ -25,7 +48,7 @@ def _notify_icon_key():
             try:
                 with winreg.OpenKey(root, sub) as k:
                     path, _ = winreg.QueryValueEx(k, "ExecutablePath")
-                if os.path.normcase(path) == me:
+                if os.path.normcase(path) in candidates:
                     return sub
             except OSError:
                 continue

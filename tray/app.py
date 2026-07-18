@@ -25,6 +25,10 @@ class UsageTray:
         self.snapshot = AppSnapshot(fetched_at=datetime.now(), accounts=[])
         self._rotate_index = 0
         self._stop = False
+        self._state_lock = threading.Lock()
+        self._refreshing = False
+        self._refresh_pending = False
+        self._last_fetch_error: str | None = None
 
         menu = pystray.Menu(
             pystray.MenuItem("Show details", self._on_details, default=True),
@@ -86,7 +90,8 @@ class UsageTray:
         def handler(icon, item):
             self.config.active_profile = name
             patch_config_toggles(self.config)
-            self._rotate_index = 0
+            with self._state_lock:
+                self._rotate_index = 0
             self._render()
 
         return handler
@@ -104,7 +109,12 @@ class UsageTray:
 
     def _on_details(self, icon, item):
         profile = get_active_profile(self.config)
-        text = build_details(profile, self.snapshot)
+        with self._state_lock:
+            snapshot = self.snapshot
+            fetch_error = self._last_fetch_error
+        text = build_details(profile, snapshot)
+        if fetch_error:
+            text = f"Last refresh failed: {fetch_error}\n\n{text}"
         threading.Thread(target=self._show_messagebox, args=(text,), daemon=True).start()
 
     def _on_toggle_visible(self, icon, item):
@@ -131,26 +141,65 @@ class UsageTray:
         icon.stop()
 
     def refresh_async(self) -> None:
-        threading.Thread(target=self._refresh_once, daemon=True).start()
+        """Start at most one fetch; coalesce overlapping refresh requests."""
+        with self._state_lock:
+            if self._refreshing:
+                self._refresh_pending = True
+                return
+            self._refreshing = True
+        threading.Thread(target=self._refresh_worker, daemon=True).start()
+
+    def _refresh_worker(self) -> None:
+        while True:
+            try:
+                fresh = fetch_all(self.config)
+                with self._state_lock:
+                    self.snapshot = merge_last_good(self.snapshot, fresh)
+                    self._last_fetch_error = None
+            except Exception as e:
+                # Stale-last-good: keep prior snapshot on total failure.
+                with self._state_lock:
+                    self._last_fetch_error = str(e)
+            self._render()
+            with self._state_lock:
+                if not self._refresh_pending or self._stop:
+                    self._refreshing = False
+                    self._refresh_pending = False
+                    return
+                self._refresh_pending = False
 
     def _refresh_once(self) -> None:
+        """Compatibility helper for smokes/tests — runs a single fetch inline."""
         try:
             fresh = fetch_all(self.config)
-            self.snapshot = merge_last_good(self.snapshot, fresh)
-        except Exception:
-            # Stale-last-good: keep prior snapshot on total failure.
-            pass
+            with self._state_lock:
+                self.snapshot = merge_last_good(self.snapshot, fresh)
+                self._last_fetch_error = None
+        except Exception as e:
+            with self._state_lock:
+                self._last_fetch_error = str(e)
         self._render()
 
     def _render(self) -> None:
         profile = get_active_profile(self.config)
-        self.icon.icon = render_icon(profile, self.snapshot, self._rotate_index)
-        self.icon.title = build_tooltip(profile, self.snapshot)
+        with self._state_lock:
+            snapshot = self.snapshot
+            rotate_index = self._rotate_index
+            fetch_error = self._last_fetch_error
+        image = render_icon(profile, snapshot, rotate_index)
+        title = build_tooltip(profile, snapshot)
+        if fetch_error:
+            prefix = "refresh failed · "
+            title = (prefix + title)[:127]
+        # Serialize Win32 notify updates; pystray has no public schedule API.
+        with self._state_lock:
+            self.icon.icon = image
+            self.icon.title = title
 
     def _poll_loop(self) -> None:
         while not self._stop:
             try:
-                self._refresh_once()
+                self.refresh_async()
             except Exception:
                 pass
             for _ in range(max(1, self.config.poll_seconds)):
@@ -167,7 +216,8 @@ class UsageTray:
                     return
                 time.sleep(1)
             if get_active_profile(self.config).icon.mode == "rotate":
-                self._rotate_index += 1
+                with self._state_lock:
+                    self._rotate_index += 1
                 try:
                     self._render()
                 except Exception:

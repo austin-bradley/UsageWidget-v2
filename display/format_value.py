@@ -5,7 +5,7 @@ from datetime import datetime
 from core.models import AccountSnapshot, AppSnapshot, DisplaySlot, Metric
 
 
-def _fmt_countdown(reset_at: datetime | None) -> str:
+def _fmt_countdown(reset_at: datetime | None, *, compact: bool = False) -> str:
     if reset_at is None:
         return "?"
     now = datetime.now(reset_at.tzinfo) if reset_at.tzinfo else datetime.now()
@@ -15,6 +15,9 @@ def _fmt_countdown(reset_at: datetime | None) -> str:
     hours, remainder = divmod(seconds, 3600)
     minutes = remainder // 60
     if hours > 0:
+        # Icon cells are tiny — prefer "2h" over "2h14m".
+        if compact:
+            return f"{hours}h"
         return f"{hours}h{minutes:02d}m"
     return f"{minutes}m"
 
@@ -36,10 +39,15 @@ def resolve_metric(
     return None
 
 
-def format_slot(slot: DisplaySlot | str, metric: Metric) -> str:
+def format_slot(
+    slot: DisplaySlot | str,
+    metric: Metric,
+    *,
+    compact: bool = False,
+) -> str:
     show = slot.show if isinstance(slot, DisplaySlot) else slot
     pct = metric.used_pct
-    countdown = _fmt_countdown(metric.resets_at)
+    countdown = _fmt_countdown(metric.resets_at, compact=compact)
 
     if show == "percent":
         return "?" if pct is None else str(pct)

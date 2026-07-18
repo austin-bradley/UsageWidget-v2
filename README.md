@@ -12,13 +12,13 @@ pip install -r requirements.txt
 python widget.py
 ```
 
-On first run, config is seeded to `%APPDATA%\UsageWidget\config.yaml` from `config.example.yaml`.
+On first run, config is seeded to `%APPDATA%\UsageWidget\config.yaml` from `config.example.yaml`. Only **Claude Personal** is enabled by default — other accounts/providers are listed but `enabled: false` so a fresh install stays quiet.
 
 ## Build exe
 
 ```powershell
 pip install pyinstaller
-pyinstaller UsageWidget-v2.spec
+python -m PyInstaller UsageWidget-v2.spec
 ```
 
 Output: `dist\UsageWidget-v2.exe` (windowed, no console). The example config is bundled and copied on first run via PyInstaller’s `_MEIPASS`.
@@ -39,14 +39,14 @@ accounts:
   - id: claude-work
     provider: claude
     label: Claude Work
-    enabled: true
+    enabled: true   # was false in the first-run example — turn on when ready
     auth:
       mode: token_file
       token_file: ~/.claude-work/.credentials.json
       claude_home: ~/.claude-work
 ```
 
-Point `claude_home` / `token_file` at a second Claude config root so personal and work stay isolated.
+Point `claude_home` / `token_file` at a second Claude config root so personal and work stay isolated. Or toggle accounts from the tray **Accounts** menu.
 
 ## Hybrid auth
 
