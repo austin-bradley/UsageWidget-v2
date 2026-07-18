@@ -1,0 +1,79 @@
+# Usage Widget v2 — copy to %APPDATA%\UsageWidget\config.yaml on first run
+
+poll_seconds: 60
+app_name: Usage Widget v2
+
+accounts:
+  - id: claude-personal
+    provider: claude
+    label: Claude Personal
+    enabled: true
+    auth:
+      mode: auto
+
+  - id: claude-work
+    provider: claude
+    label: Claude Work
+    enabled: true
+    auth:
+      mode: token_file
+      token_file: ~/.claude-work/.credentials.json
+      claude_home: ~/.claude-work
+
+  - id: cursor-main
+    provider: cursor
+    enabled: true
+    auth:
+      mode: auto
+
+  - id: gpt-main
+    provider: gpt
+    enabled: true
+    auth:
+      mode: auto
+
+  - id: gemini-main
+    provider: gemini
+    enabled: true
+    auth:
+      mode: auto
+
+active_profile: default
+
+profiles:
+  default:
+    icon:
+      mode: composite
+      layout: split
+      max_slots: 3
+      rotate_seconds: 8
+      color_by: percent
+      thresholds:
+        warn: 60
+        critical: 85
+      show_labels: false
+      slots:
+        - ref: claude-personal.session
+          show: percent_and_reset
+          label: P
+        - ref: claude-work.session
+          show: percent_and_reset
+          label: W
+    tooltip:
+      format: compact
+      max_chars: 127
+      slots:
+        - ref: claude-personal.session
+          show: percent_and_reset
+        - ref: claude-work.session
+          show: percent_and_reset
+        - ref: cursor-main.included
+          show: used_of_limit
+    details:
+      show: all_enabled_accounts
+      group_by: account
+      metric_order: as_returned
+      always_include_resets: true
+      show_errors: true
+      show_plan: true
+      show_fetched_at: true
