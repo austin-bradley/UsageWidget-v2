@@ -140,9 +140,16 @@ class UsageTray:
         with self._state_lock:
             snapshot = self.snapshot
             fetch_error = self._last_fetch_error
-        text = build_details(profile, snapshot)
-        if fetch_error:
-            text = f"Last refresh failed: {fetch_error}\n\n{text}"
+            awaiting = self._merge_baseline is not None and not snapshot.accounts
+        if awaiting:
+            text = (
+                f"{self.config.app_name} is still fetching usage…\n\n"
+                "Try Show details again in a moment."
+            )
+        else:
+            text = build_details(profile, snapshot)
+            if fetch_error:
+                text = f"Last refresh failed: {fetch_error}\n\n{text}"
         threading.Thread(target=self._show_messagebox, args=(text,), daemon=True).start()
 
     def _on_toggle_visible(self, icon, item):

@@ -1,6 +1,8 @@
-# Usage Widget v2 — copy to %APPDATA%\UsageWidget\config.yaml on first run
-# First-run defaults stay quiet: only Claude personal is enabled.
-# Flip enabled: true (and Accounts menu) for extra accounts/providers.
+# Usage Widget v2 — seeded to %APPDATA%\UsageWidget\config.yaml on first run
+# Defaults stay quiet: only Claude personal is enabled in this file.
+# First-run discovery may enable Cursor/GPT/Gemini if those logins are found
+# (never enables claude-work unless that exact account id is discovered).
+# Flip enabled: true (or use the Accounts tray menu) for more accounts.
 
 poll_seconds: 60
 app_name: Usage Widget v2
