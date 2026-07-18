@@ -18,6 +18,7 @@ from core.models import (
     IconDisplay,
     TooltipDisplay,
 )
+from providers.registry import PROVIDERS
 
 
 def config_path() -> Path:
@@ -338,11 +339,6 @@ def _enable_discovered_accounts(cfg: AppConfig, path: Path) -> AppConfig:
     Keeps the example quiet by default, but turns on Cursor/GPT/Gemini (etc.)
     when local login evidence is already present.
     """
-    try:
-        from providers.registry import PROVIDERS
-    except Exception:
-        return cfg
-
     changed = False
     for account in cfg.accounts:
         if account.enabled:

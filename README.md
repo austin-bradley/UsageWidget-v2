@@ -109,7 +109,7 @@ If auth or endpoints aren’t ready, the account degrades to a clear error and d
 
 ## Tray menu
 
-Show details · Refresh now · **Display options…** (icon + tooltip slots, drag-reorder tooltip rows, presets) · Display profile · Accounts · Always visible · **Settings** (same Display options, Open / Reload / Reset config, Copy details, Open log, About) · Quit
+Show details (Refresh / Copy / Display options inside the window) · Refresh now · **Display options…** · Display profile · Accounts · Always visible · **Settings** · Quit
 
 **Display options** writes the active profile’s icon/tooltip into `%APPDATA%\UsageWidget\config.yaml` and refreshes immediately (no restart). YAML editing + **Reload config** still works. Prefer a **single large %** on the icon — Windows draws tray icons very small.
 

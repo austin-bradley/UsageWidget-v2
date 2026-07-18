@@ -6,6 +6,23 @@ from core.models import AppSnapshot, DisplayProfile
 from display.format_value import format_slot, resolve_metric
 
 
+def _join_truncated(pieces: list[str], max_chars: int, sep: str = " · ") -> str:
+    """Keep whole pieces when possible instead of cutting mid-token."""
+    if max_chars <= 0:
+        return ""
+    if not pieces:
+        return ""
+    out = pieces[0]
+    if len(out) > max_chars:
+        return out[: max_chars - 1] + "…" if max_chars > 1 else out[:max_chars]
+    for piece in pieces[1:]:
+        candidate = f"{out}{sep}{piece}"
+        if len(candidate) > max_chars:
+            break
+        out = candidate
+    return out
+
+
 def build_tooltip(
     profile: DisplayProfile,
     snapshot: AppSnapshot,
@@ -24,6 +41,7 @@ def build_tooltip(
             label = label.split()[0]
         pieces.append(f"{label} {format_slot(slot, metric)}")
 
+    max_chars = max(0, profile.tooltip.max_chars)
     if not pieces:
         if any(account.error for account in snapshot.accounts):
             tooltip = "Usage unavailable"
@@ -32,13 +50,18 @@ def build_tooltip(
         else:
             tooltip = "Loading…"
     elif profile.tooltip.format == "lines":
-        tooltip = "\n".join(pieces)
+        # Windows tray titles usually flatten newlines; still prefer piece-aware trim.
+        tooltip = _join_truncated(pieces, max_chars, sep="\n")
     else:
-        tooltip = " · ".join(pieces)
+        tooltip = _join_truncated(pieces, max_chars)
 
     if stale_after_seconds and snapshot.accounts:
         age = (datetime.now() - snapshot.fetched_at.replace(tzinfo=None)).total_seconds()
         if age > stale_after_seconds:
-            tooltip = f"stale · {tooltip}"
+            prefix = "stale · "
+            room = max_chars - len(prefix)
+            tooltip = prefix + (
+                _join_truncated(pieces, room) if pieces else tooltip[: max(0, room)]
+            )
 
-    return tooltip[: max(0, profile.tooltip.max_chars)]
+    return tooltip[:max_chars]

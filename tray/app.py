@@ -235,22 +235,35 @@ class UsageTray:
 
         return handler
 
-    def _on_details(self, icon, item):
+    def _details_body(self) -> str:
         profile = get_active_profile(self.config)
         with self._state_lock:
             snapshot = self.snapshot
             fetch_error = self._last_fetch_error
             awaiting = self._merge_baseline is not None and not snapshot.accounts
         if awaiting:
-            text = (
+            return (
                 f"{self.config.app_name} is still fetching usage…\n\n"
-                "Try Show details again in a moment."
+                "Try Refresh in a moment."
             )
-        else:
-            text = build_details(profile, snapshot)
-            if fetch_error:
-                text = f"Last refresh failed: {fetch_error}\n\n{text}"
-        show_details(self.config.app_name, text)
+        text = build_details(profile, snapshot)
+        if fetch_error:
+            text = f"Last refresh failed: {fetch_error}\n\n{text}"
+        return text
+
+    def _details_refresh(self) -> str:
+        self._refresh_once()
+        return self._details_body()
+
+    def _on_details(self, icon, item):
+        show_details(
+            self.config.app_name,
+            self._details_body(),
+            get_body=self._details_body,
+            on_refresh=self._details_refresh,
+            on_copy=_set_clipboard_text,
+            on_display_options=lambda: self._on_display_options(None, None),
+        )
 
     def _on_toggle_visible(self, icon, item):
         want = not get_always_visible()
@@ -261,6 +274,13 @@ class UsageTray:
                 "in a moment, or set it via Settings > Personalization > "
                 "Taskbar > Other system tray icons."
             )
+            return
+        # Nudge Explorer by rewriting the icon after the registry change.
+        self._render()
+        try:
+            self.icon.update_menu()
+        except Exception:
+            pass
 
     def _show_messagebox(self, text: str, *, ask: bool = False) -> bool:
         flags = 0x40  # MB_ICONINFORMATION
