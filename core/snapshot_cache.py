@@ -1,4 +1,4 @@
-"""Persist last-good AppSnapshot so restarts show prior metrics immediately."""
+"""Persist last AppSnapshot as a merge baseline for the next run (not painted until verified)."""
 from __future__ import annotations
 
 import json

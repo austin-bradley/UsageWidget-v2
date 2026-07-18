@@ -109,8 +109,18 @@ def _open(
         row=0, column=2, sticky="w"
     )
 
+    color_by_var = tk.StringVar(value=draft.icon.color_by or "percent")
+    tk.Label(icon_tab, text="Color by").grid(row=3, column=0, sticky="w", padx=8, pady=4)
+    ttk.Combobox(
+        icon_tab,
+        textvariable=color_by_var,
+        values=["percent", "remaining_pct", "none"],
+        state="readonly",
+        width=16,
+    ).grid(row=3, column=1, sticky="w", padx=4, pady=4)
+
     preview_label = tk.Label(icon_tab)
-    preview_label.grid(row=0, column=3, rowspan=3, padx=12, pady=6)
+    preview_label.grid(row=0, column=3, rowspan=4, padx=12, pady=6)
     _preview_photo: list[ImageTk.PhotoImage | None] = [None]
 
     icon_slots: list[dict[str, object]] = []
@@ -318,6 +328,7 @@ def _open(
             probe.icon.layout = "split"
             probe.icon.max_slots = 2
         probe.icon.slots = collect_icon_slots()
+        probe.icon.color_by = color_by_var.get() or "percent"
         image = render_icon(probe, snapshot).resize((72, 72))
         photo = ImageTk.PhotoImage(image)
         _preview_photo[0] = photo
@@ -375,6 +386,7 @@ def _open(
 
     preset_box.bind("<<ComboboxSelected>>", apply_preset)
     layout_var.trace_add("write", sync_layout_ui)
+    color_by_var.trace_add("write", refresh_icon_preview)
     for row in icon_slots:
         row["ref"].trace_add("write", refresh_icon_preview)  # type: ignore[union-attr]
         row["show"].trace_add("write", refresh_icon_preview)  # type: ignore[union-attr]
@@ -385,7 +397,7 @@ def _open(
         _window = None
         win.destroy()
 
-    def save() -> None:
+    def persist(*, close_after: bool) -> None:
         slots = collect_icon_slots()
         if not slots:
             messagebox.showerror("Display options", "Icon needs at least one metric.", parent=win)
@@ -407,8 +419,7 @@ def _open(
             max_chars=draft.tooltip.max_chars,
             slots=[copy.deepcopy(s) for s in tip_slots],
         )
-        # Keep other icon fields
-        profile.icon.color_by = draft.icon.color_by
+        profile.icon.color_by = color_by_var.get() or "percent"
         profile.icon.thresholds = dict(draft.icon.thresholds)
         profile.icon.show_labels = draft.icon.show_labels
         profile.icon.rotate_seconds = draft.icon.rotate_seconds
@@ -417,12 +428,21 @@ def _open(
         except Exception as error:
             messagebox.showerror("Display options", f"Couldn't save:\n{error}", parent=win)
             return
-        close()
+        draft.icon.color_by = profile.icon.color_by
+        refresh_icon_preview()
+        update_preview()
+        if close_after:
+            close()
 
     action = tk.Frame(win)
     action.pack(fill=tk.X, padx=12, pady=10)
     tk.Button(action, text="Cancel", width=10, command=close).pack(side=tk.RIGHT, padx=4)
-    tk.Button(action, text="Save", width=10, command=save).pack(side=tk.RIGHT, padx=4)
+    tk.Button(
+        action, text="Save", width=10, command=lambda: persist(close_after=True)
+    ).pack(side=tk.RIGHT, padx=4)
+    tk.Button(
+        action, text="Apply", width=10, command=lambda: persist(close_after=False)
+    ).pack(side=tk.RIGHT, padx=4)
 
     win.protocol("WM_DELETE_WINDOW", close)
     sync_layout_ui()

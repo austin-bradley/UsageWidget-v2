@@ -98,6 +98,8 @@ def _draw_centered_text(
     text: str,
     color: RGBA,
     start_size: int,
+    *,
+    stroke: bool = False,
 ) -> None:
     left, top, right, bottom = box
     font = _fit_font(
@@ -110,7 +112,12 @@ def _draw_centered_text(
     width, height, bounds = _text_size(draw, text, font)
     x = left + (right - left - width) / 2 - bounds[0]
     y = top + (bottom - top - height) / 2 - bounds[1]
-    draw.text((x, y), text, font=font, fill=color)
+    kwargs: dict = {"font": font, "fill": color}
+    if stroke:
+        # Dark edge keeps digits readable when Windows shrinks the tray icon.
+        kwargs["stroke_width"] = 2
+        kwargs["stroke_fill"] = (0, 0, 0, 220)
+    draw.text((x, y), text, **kwargs)
 
 
 def _draw_status_ring(
@@ -118,14 +125,22 @@ def _draw_status_ring(
     color: RGBA,
     *,
     inset: int = 3,
+    fill: bool = False,
 ) -> None:
     # Soft outer ring so single-digit icons still read as "metered".
-    ring = (*color[:3], 210)
+    ring = (*color[:3], 230)
+    if fill:
+        tint = (*color[:3], 55)
+        draw.rounded_rectangle(
+            (inset, inset, 64 - inset, 64 - inset),
+            radius=13,
+            fill=tint,
+        )
     draw.rounded_rectangle(
         (inset, inset, 64 - inset, 64 - inset),
         radius=13,
         outline=ring,
-        width=2,
+        width=3,
     )
 
 
@@ -150,6 +165,7 @@ def _draw_value(
         format_slot(slot, metric, compact=True),
         color,
         start_size,
+        stroke=True,
     )
 
 
@@ -163,7 +179,7 @@ def _draw_split(
         color = _color_for_metric(
             visible[0][1], profile.icon.color_by, profile.icon.thresholds
         )
-        _draw_status_ring(draw, color)
+        _draw_status_ring(draw, color, fill=True)
         _draw_value(draw, (4, 4, 60, 60), visible[0], profile, 44)
         return
     draw.line((32, 10, 32, 54), fill=_DIVIDER, width=1)
@@ -246,13 +262,14 @@ def render_icon(
     if not items:
         has_error = any(account.error for account in snapshot.accounts)
         color = (255, 99, 97, 255) if has_error else _MUTED
-        _draw_status_ring(draw, color)
+        _draw_status_ring(draw, color, fill=True)
         _draw_centered_text(
             draw,
             (4, 4, 60, 60),
             "!" if has_error else "·",
             color,
             40,
+            stroke=True,
         )
         return image
 
@@ -261,13 +278,13 @@ def render_icon(
         color = _color_for_metric(
             selected[1], profile.icon.color_by, profile.icon.thresholds
         )
-        _draw_status_ring(draw, color)
+        _draw_status_ring(draw, color, fill=True)
         _draw_value(draw, (4, 4, 60, 60), selected, profile, 44)
     elif profile.icon.mode == "single" or profile.icon.layout == "primary_only":
         color = _color_for_metric(
             items[0][1], profile.icon.color_by, profile.icon.thresholds
         )
-        _draw_status_ring(draw, color)
+        _draw_status_ring(draw, color, fill=True)
         _draw_value(draw, (4, 4, 60, 60), items[0], profile, 44)
     elif profile.icon.mode == "composite" and profile.icon.layout == "stacked_bars":
         _draw_stacked_bars(draw, items, profile)
