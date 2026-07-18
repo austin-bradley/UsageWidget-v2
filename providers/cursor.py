@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import sqlite3
@@ -194,7 +195,8 @@ def _next_month(value: Any) -> datetime | None:
         return None
     year = start.year + (1 if start.month == 12 else 0)
     month = 1 if start.month == 12 else start.month + 1
-    return start.replace(year=year, month=month)
+    day = min(start.day, calendar.monthrange(year, month)[1])
+    return start.replace(year=year, month=month, day=day)
 
 
 def _legacy_metric(data: dict[str, Any]) -> Metric | None:

@@ -10,7 +10,12 @@ from datetime import datetime
 import pystray
 
 from core.app_log import log_event, log_path
-from core.config import config_path, load_config, patch_config_toggles
+from core.config import (
+    config_path,
+    example_config_path,
+    load_config,
+    patch_config_toggles,
+)
 from core.models import AppConfig, AppSnapshot
 from core.poller import fetch_all, filter_enabled, merge_last_good, next_poll_seconds
 from core.snapshot_cache import load_snapshot, save_snapshot
@@ -48,6 +53,7 @@ class UsageTray:
             ),
             pystray.MenuItem("Open config", self._on_open_config),
             pystray.MenuItem("Reload config", self._on_reload_config),
+            pystray.MenuItem("Reset config to example", self._on_reset_config),
             pystray.MenuItem("Open log", self._on_open_log),
             pystray.MenuItem("Quit", self._on_quit),
         )
@@ -136,8 +142,12 @@ class UsageTray:
                 "Taskbar > Other system tray icons."
             )
 
-    def _show_messagebox(self, text: str) -> None:
-        ctypes.windll.user32.MessageBoxW(0, text, self.config.app_name, 0x40)
+    def _show_messagebox(self, text: str, *, ask: bool = False) -> bool:
+        flags = 0x40  # MB_ICONINFORMATION
+        if ask:
+            flags = 0x24  # MB_YESNO | MB_ICONQUESTION
+        result = ctypes.windll.user32.MessageBoxW(0, text, self.config.app_name, flags)
+        return result == 6  # IDYES
 
     def _on_open_config(self, icon, item):
         os.startfile(str(config_path()))
@@ -153,6 +163,33 @@ class UsageTray:
         except Exception as e:
             log_event(f"config reload failed: {e}")
             self._show_messagebox(f"Couldn't reload config:\n{e}")
+
+    def _on_reset_config(self, icon, item):
+        path = config_path()
+        example = example_config_path()
+        if not self._show_messagebox(
+            f"Replace {path} with the bundled example?\n\n"
+            "Your current config will be overwritten.",
+            ask=True,
+        ):
+            return
+        try:
+            import shutil
+
+            if not example.exists():
+                raise FileNotFoundError(f"Example config not found: {example}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(example, path)
+            self.config = load_config(path)
+            with self._state_lock:
+                self._rotate_index = 0
+                self.snapshot = filter_enabled(self.snapshot, self.config)
+            log_event("config reset to example")
+            self.refresh_async()
+            self._show_messagebox(f"Config reset.\n\n{path}")
+        except Exception as e:
+            log_event(f"config reset failed: {e}")
+            self._show_messagebox(f"Couldn't reset config:\n{e}")
 
     def _on_open_log(self, icon, item):
         path = log_path()
@@ -235,7 +272,11 @@ class UsageTray:
             rotate_index = self._rotate_index
             fetch_error = self._last_fetch_error
         image = render_icon(profile, snapshot, rotate_index)
-        title = build_tooltip(profile, snapshot)
+        title = build_tooltip(
+            profile,
+            snapshot,
+            stale_after_seconds=max(120, next_poll_seconds(self.config) * 2),
+        )
         if fetch_error:
             prefix = "refresh failed · "
             title = (prefix + title)[:127]
