@@ -325,7 +325,10 @@ def _enable_discovered_accounts(cfg: AppConfig, path: Path) -> AppConfig:
             found = provider.discover_accounts()
         except Exception:
             continue
-        if found:
+        # Only enable when discovery returns this exact account id
+        # (avoids turning on claude-work just because personal Claude is logged in).
+        suggested_ids = {item.suggested_id for item in found}
+        if account.id in suggested_ids:
             account.enabled = True
             changed = True
     if changed:

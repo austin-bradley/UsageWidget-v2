@@ -51,6 +51,10 @@ def _color_for_metric(
     pct = metric.used_pct
     if pct is None:
         return _MUTED
+    if color_by == "remaining_pct":
+        # Low remaining → high pressure → red (same cutoffs as used%).
+        remaining = max(0, min(100, 100 - pct))
+        return _color_for_pct(100 - remaining, thresholds)
     return _color_for_pct(pct, thresholds)
 
 
@@ -186,7 +190,9 @@ def _draw_stacked_bars(
                 draw.rounded_rectangle(
                     (6, top, fill_right, bottom),
                     radius=5,
-                    fill=_color_for_pct(pct, profile.icon.thresholds),
+                    fill=_color_for_metric(
+                        metric, profile.icon.color_by, profile.icon.thresholds
+                    ),
                 )
         value = format_slot(slot, metric, compact=True)
         prefix = f"{(slot.label or metric.label)[:3]} " if profile.icon.show_labels else ""

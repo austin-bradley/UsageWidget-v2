@@ -30,11 +30,13 @@ from tray.win_notify import get_always_visible, set_always_visible
 class UsageTray:
     def __init__(self, config: AppConfig):
         self.config = config
+        # Keep disk cache as merge baseline only — do not paint unverified meters
+        # (avoids showing stale % after logout until the first poll finishes).
         cached = load_snapshot()
-        if cached is not None:
-            self.snapshot = filter_enabled(cached, config)
-        else:
-            self.snapshot = AppSnapshot(fetched_at=datetime.now(), accounts=[])
+        self._merge_baseline = (
+            filter_enabled(cached, config) if cached is not None else None
+        )
+        self.snapshot = AppSnapshot(fetched_at=datetime.now(), accounts=[])
         self._rotate_index = 0
         self._stop = False
         self._state_lock = threading.Lock()
@@ -60,13 +62,7 @@ class UsageTray:
         )
         log_event(f"tray start ({len(config.accounts)} accounts configured)")
         profile = get_active_profile(self.config)
-        initial_title = build_tooltip(
-            profile,
-            self.snapshot,
-            stale_after_seconds=max(120, next_poll_seconds(config) * 2),
-        )
-        if not self.snapshot.accounts:
-            initial_title = f"{self.config.app_name}: starting…"
+        initial_title = f"{self.config.app_name}: starting…"
         self.icon = pystray.Icon(
             "usage-widget",
             render_icon(profile, self.snapshot, self._rotate_index),
@@ -238,7 +234,9 @@ class UsageTray:
                 fresh = fetch_all(self.config)
                 fresh = filter_enabled(fresh, self.config)
                 with self._state_lock:
-                    self.snapshot = merge_last_good(self.snapshot, fresh)
+                    baseline = self._merge_baseline or self.snapshot
+                    self.snapshot = merge_last_good(baseline, fresh)
+                    self._merge_baseline = None
                     self._last_fetch_error = None
                     to_save = self.snapshot
                 for account in to_save.accounts:
@@ -249,8 +247,9 @@ class UsageTray:
                 except Exception as cache_error:
                     log_event(f"snapshot cache write failed: {cache_error}")
             except Exception as e:
-                # Stale-last-good: keep prior snapshot on total failure.
+                # Keep whatever we already painted; do not resurrect unverified cache.
                 with self._state_lock:
+                    self._merge_baseline = None
                     self._last_fetch_error = str(e)
                 log_event(f"refresh failed: {e}")
             self._render()
@@ -267,7 +266,9 @@ class UsageTray:
             fresh = fetch_all(self.config)
             fresh = filter_enabled(fresh, self.config)
             with self._state_lock:
-                self.snapshot = merge_last_good(self.snapshot, fresh)
+                baseline = self._merge_baseline or self.snapshot
+                self.snapshot = merge_last_good(baseline, fresh)
+                self._merge_baseline = None
                 self._last_fetch_error = None
                 to_save = self.snapshot
             try:
@@ -276,6 +277,7 @@ class UsageTray:
                 pass
         except Exception as e:
             with self._state_lock:
+                self._merge_baseline = None
                 self._last_fetch_error = str(e)
             log_event(f"refresh failed: {e}")
         self._render()
