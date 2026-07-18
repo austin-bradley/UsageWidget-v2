@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from core.models import AccountConfig, AccountSnapshot, AuthConfig, Metric
-from providers.base import DiscoveredAccount, auth_preflight, resolve_auth_path
+from providers.base import (
+    DiscoveredAccount,
+    auth_preflight,
+    error_snapshot,
+    resolve_auth_path,
+)
 
 
 API_BASE = "https://api2.cursor.sh"
@@ -274,12 +279,15 @@ class CursorProvider:
                 metrics=[metric],
             )
         except Exception as error:
-            return AccountSnapshot(
-                account_id=account.id,
-                provider_id=self.id,
+            had_creds = False
+            try:
+                had_creds = bool(_resolve_token(account.auth))
+            except Exception:
+                had_creds = _state_db_path().is_file()
+            return error_snapshot(
+                account,
+                self.id,
+                error,
                 display_name=account.label or "Cursor",
-                logged_in=False,
-                plan=None,
-                metrics=[],
-                error=str(error),
+                had_credentials=had_creds,
             )

@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import Protocol
 
+from core.auth_errors import is_auth_error
 from core.models import AccountConfig, AccountSnapshot
 
 
@@ -41,3 +42,26 @@ def auth_preflight(auth) -> str | None:
     if mode == "token_file" and not getattr(auth, "token_file", None):
         return "auth.mode is token_file but no token_file is set"
     return None
+
+
+def error_snapshot(
+    account: AccountConfig,
+    provider_id: str,
+    error: object,
+    *,
+    display_name: str | None = None,
+    plan: str | None = None,
+    had_credentials: bool = False,
+) -> AccountSnapshot:
+    """Build a failed fetch snapshot with auth-aware ``logged_in``."""
+    message = str(error)
+    auth_fail = is_auth_error(message)
+    return AccountSnapshot(
+        account_id=account.id,
+        provider_id=provider_id,
+        display_name=display_name or account.label or account.id,
+        logged_in=bool(had_credentials) and not auth_fail,
+        plan=plan,
+        metrics=[],
+        error=message,
+    )

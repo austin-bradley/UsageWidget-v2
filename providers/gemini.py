@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from core.models import AccountConfig, AccountSnapshot, Metric
-from providers.base import DiscoveredAccount, auth_preflight
+from providers.base import DiscoveredAccount, auth_preflight, error_snapshot
 
 
 USED_KEYS = ("used_percent", "usedPercent", "usedPercentage", "percentUsed")
@@ -227,12 +227,13 @@ class GeminiProvider:
                 metrics=[metric],
             )
         except Exception as error:
-            return AccountSnapshot(
-                account_id=account.id,
-                provider_id=self.id,
+            message = str(error)
+            # CLI present but parse/run flaky → keep last-good; missing CLI → auth-ish clear.
+            had_creds = "not found" not in message.casefold()
+            return error_snapshot(
+                account,
+                self.id,
+                error,
                 display_name=display_name,
-                logged_in=False,
-                plan=None,
-                metrics=[],
-                error=str(error),
+                had_credentials=had_creds,
             )

@@ -1,57 +1,17 @@
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+from core.auth_errors import is_auth_error
 from core.models import AppConfig, AppSnapshot, AccountSnapshot
 from providers.registry import get_provider
-
-
-_AUTH_ERROR_MARKERS = (
-    "not logged in",
-    "not signed in",
-    "signed out",
-    "auth ",
-    "auth.",
-    "auth,",
-    "authentication",
-    "unauthorized",
-    "forbidden",
-    "credentials",
-    "access token",
-    "token not found",
-    "token file not found",
-    "token expired",
-    "couldn't find the claude",
-    "login",
-    "log in",
-    "sign in",
-    "api_key",
-    "api key",
-)
-
-# Avoid bare "401"/"403" digit matches inside unrelated numbers/ids.
-_AUTH_STATUS_RE = re.compile(
-    r"(?:^|[\s:;\(\[\{])(?:http\s*)?(?:status\s*)?(?:error\s*)?40[13](?:\b|[\s:;\.,\)\]\}]|$)",
-    re.IGNORECASE,
-)
-
-
-def is_auth_error(error: str | None) -> bool:
-    """True when the failure likely means credentials are gone/invalid."""
-    if not error:
-        return False
-    text = error.casefold()
-    if any(marker in text for marker in _AUTH_ERROR_MARKERS):
-        return True
-    return bool(_AUTH_STATUS_RE.search(error))
 
 
 def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
     """Merge polls with auth-aware last-good retention.
 
-    - Auth/login errors: do **not** keep stale meters (show failure clearly).
-    - Transient errors: keep prior metrics/plan, surface the new error.
-    - Empty successful parses: keep prior metrics (avoid flipping to "?").
+    - Auth/login errors or logged_in=False: do **not** keep stale meters.
+    - Transient errors while still logged in: keep prior metrics/plan.
+    - Empty successful parses while logged in: keep prior metrics.
     """
     prev_by_id = {a.account_id: a for a in previous.accounts}
     merged: list[AccountSnapshot] = []
@@ -59,7 +19,13 @@ def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
         prev = prev_by_id.get(acct.account_id)
 
         if acct.error is not None:
-            if is_auth_error(acct.error) or prev is None or not prev.metrics:
+            clear = (
+                is_auth_error(acct.error)
+                or not acct.logged_in
+                or prev is None
+                or not prev.metrics
+            )
+            if clear:
                 merged.append(acct)
             else:
                 merged.append(
@@ -67,7 +33,7 @@ def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
                         account_id=acct.account_id,
                         provider_id=acct.provider_id,
                         display_name=acct.display_name,
-                        logged_in=prev.logged_in,
+                        logged_in=True,
                         plan=prev.plan if prev.plan is not None else acct.plan,
                         metrics=list(prev.metrics),
                         error=acct.error,

@@ -15,6 +15,7 @@ from providers.base import (
     DiscoveredAccount,
     auth_mode,
     auth_preflight,
+    error_snapshot,
     resolve_auth_path,
 )
 
@@ -306,12 +307,17 @@ class ClaudeProvider:
                 metrics=metrics,
             )
         except Exception as error:
-            return AccountSnapshot(
-                account_id=account.id,
-                provider_id=self.id,
+            had_creds = False
+            try:
+                _, credentials_path, _ = _auth_paths(account.auth)
+                had_creds = credentials_path.is_file()
+            except Exception:
+                had_creds = False
+            return error_snapshot(
+                account,
+                self.id,
+                error,
                 display_name=account.label or _account_display_name(info),
-                logged_in=False,
                 plan=str(info["plan"]) if info.get("plan") else None,
-                metrics=[],
-                error=str(error),
+                had_credentials=had_creds,
             )

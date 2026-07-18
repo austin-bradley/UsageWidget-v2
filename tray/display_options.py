@@ -6,8 +6,11 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import messagebox, ttk
 
-from core.models import AppConfig, AppSnapshot, DisplaySlot, TooltipDisplay
+from PIL import ImageTk
+
+from core.models import AppConfig, AppSnapshot, DisplayProfile, DisplaySlot, TooltipDisplay
 from display.available_metrics import SHOW_MODES, list_available_metric_refs
+from display.icon import render_icon
 from display.profiles import get_active_profile
 from display.tooltip import build_tooltip
 from tray import ui_thread
@@ -106,12 +109,18 @@ def _open(
         row=0, column=2, sticky="w"
     )
 
-    icon_slots: list[dict[str, tk.Variable | ttk.Combobox]] = []
+    preview_label = tk.Label(icon_tab)
+    preview_label.grid(row=0, column=3, rowspan=3, padx=12, pady=6)
+    _preview_photo: list[ImageTk.PhotoImage | None] = [None]
+
+    icon_slots: list[dict[str, object]] = []
+    icon_frames: list[tk.LabelFrame] = []
     for i in range(2):
         slot = draft.icon.slots[i] if i < len(draft.icon.slots) else None
         frame = tk.LabelFrame(icon_tab, text=f"Slot {i + 1}")
         frame.grid(row=1 + i, column=0, columnspan=3, sticky="ew", padx=8, pady=4)
         icon_tab.columnconfigure(0, weight=1)
+        icon_frames.append(frame)
 
         ref_var = tk.StringVar(
             value=label_by_ref.get(slot.ref, slot.ref) if slot else ""
@@ -250,9 +259,10 @@ def _open(
     def on_drag_end(_event: tk.Event) -> None:
         _drag_index[0] = None
 
-    tip_list.bind("<ButtonPress-1>", on_drag_start)
-    tip_list.bind("<B1-Motion>", on_drag_motion)
-    tip_list.bind("<ButtonRelease-1>", on_drag_end)
+    # Right-drag reorders so left-click can select a row.
+    tip_list.bind("<ButtonPress-3>", on_drag_start)
+    tip_list.bind("<B3-Motion>", on_drag_motion)
+    tip_list.bind("<ButtonRelease-3>", on_drag_end)
 
     btns = tk.Frame(tip_tab)
     btns.pack(fill=tk.X, padx=8, pady=4)
@@ -260,6 +270,7 @@ def _open(
     tk.Button(btns, text="Remove", command=remove_slot, width=8).pack(side=tk.LEFT, padx=2)
     tk.Button(btns, text="Up", command=lambda: move(-1), width=6).pack(side=tk.LEFT, padx=2)
     tk.Button(btns, text="Down", command=lambda: move(1), width=6).pack(side=tk.LEFT, padx=2)
+    tk.Label(btns, text="Right-drag to reorder", fg="#666").pack(side=tk.LEFT, padx=8)
 
     def resolve_ref(raw: str) -> str | None:
         raw = raw.strip()
@@ -272,14 +283,45 @@ def _open(
         limit = 1 if layout_var.get() == "single" else 2
         for i in range(limit):
             row = icon_slots[i]
-            ref = resolve_ref(str(row["ref"].get()))
+            ref = resolve_ref(str(row["ref"].get()))  # type: ignore[arg-type]
             if not ref:
                 continue
-            label = str(row["label"].get()).strip() or None
+            label = str(row["label"].get()).strip() or None  # type: ignore[union-attr]
             slots.append(
-                DisplaySlot(ref=ref, show=str(row["show"].get()) or "percent", label=label)
+                DisplaySlot(
+                    ref=ref,
+                    show=str(row["show"].get()) or "percent",  # type: ignore[union-attr]
+                    label=label,
+                )
             )
         return slots
+
+    def sync_layout_ui(*_args: object) -> None:
+        if layout_var.get() == "single":
+            icon_frames[1].grid_remove()
+        else:
+            icon_frames[1].grid()
+        refresh_icon_preview()
+
+    def refresh_icon_preview(*_args: object) -> None:
+        probe = DisplayProfile(
+            icon=copy.deepcopy(draft.icon),
+            tooltip=copy.deepcopy(draft.tooltip),
+            details=copy.deepcopy(draft.details),
+        )
+        if layout_var.get() == "single":
+            probe.icon.mode = "single"
+            probe.icon.layout = "primary_only"
+            probe.icon.max_slots = 1
+        else:
+            probe.icon.mode = "composite"
+            probe.icon.layout = "split"
+            probe.icon.max_slots = 2
+        probe.icon.slots = collect_icon_slots()
+        image = render_icon(probe, snapshot).resize((72, 72))
+        photo = ImageTk.PhotoImage(image)
+        _preview_photo[0] = photo
+        preview_label.configure(image=photo)
 
     def apply_preset(_event: object | None = None) -> None:
         name = preset_var.get()
@@ -328,9 +370,15 @@ def _open(
             )
         else:
             return
+        sync_layout_ui()
         refresh_tip_list()
 
     preset_box.bind("<<ComboboxSelected>>", apply_preset)
+    layout_var.trace_add("write", sync_layout_ui)
+    for row in icon_slots:
+        row["ref"].trace_add("write", refresh_icon_preview)  # type: ignore[union-attr]
+        row["show"].trace_add("write", refresh_icon_preview)  # type: ignore[union-attr]
+        row["label"].trace_add("write", refresh_icon_preview)  # type: ignore[union-attr]
 
     def close() -> None:
         global _window
@@ -377,6 +425,7 @@ def _open(
     tk.Button(action, text="Save", width=10, command=save).pack(side=tk.RIGHT, padx=4)
 
     win.protocol("WM_DELETE_WINDOW", close)
+    sync_layout_ui()
     refresh_tip_list()
     win.lift()
     win.focus_force()

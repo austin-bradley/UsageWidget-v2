@@ -108,7 +108,10 @@ class UsageTray:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._on_quit),
         )
-        log_event(f"tray start ({len(config.accounts)} accounts configured)")
+        enabled_n = sum(1 for a in config.accounts if a.enabled)
+        log_event(
+            f"tray start ({enabled_n}/{len(config.accounts)} accounts enabled)"
+        )
         profile = get_active_profile(self.config)
         initial_title = f"{self.config.app_name}: starting…"
         self.icon = pystray.Icon(

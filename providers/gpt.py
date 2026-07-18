@@ -13,6 +13,7 @@ from providers.base import (
     DiscoveredAccount,
     auth_mode,
     auth_preflight,
+    error_snapshot,
     resolve_auth_path,
 )
 
@@ -206,12 +207,16 @@ class GptProvider:
                 metrics=metrics,
             )
         except Exception as error:
-            return AccountSnapshot(
-                account_id=account.id,
-                provider_id=self.id,
+            had_creds = False
+            try:
+                had_creds = _auth_path(account.auth).is_file()
+            except Exception:
+                had_creds = False
+            return error_snapshot(
+                account,
+                self.id,
+                f"GPT usage API failed: {error}",
                 display_name=display_name,
-                logged_in=False,
                 plan=plan,
-                metrics=[],
-                error=f"GPT usage API failed: {error}",
+                had_credentials=had_creds,
             )
