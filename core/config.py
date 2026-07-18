@@ -274,12 +274,47 @@ def patch_config_toggles(cfg: AppConfig, path: Path | None = None) -> None:
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
+def _enable_discovered_accounts(cfg: AppConfig, path: Path) -> AppConfig:
+    """On first-run seed, enable optional accounts whose providers are discoverable.
+
+    Keeps the example quiet by default, but turns on Cursor/GPT/Gemini (etc.)
+    when local login evidence is already present.
+    """
+    try:
+        from providers.registry import PROVIDERS
+    except Exception:
+        return cfg
+
+    changed = False
+    for account in cfg.accounts:
+        if account.enabled:
+            continue
+        provider = PROVIDERS.get(account.provider)
+        if provider is None:
+            continue
+        try:
+            found = provider.discover_accounts()
+        except Exception:
+            continue
+        if found:
+            account.enabled = True
+            changed = True
+    if changed:
+        patch_config_toggles(cfg, path)
+    return cfg
+
+
 def ensure_config() -> AppConfig:
     path = config_path()
+    created = False
     if not path.exists():
         example = example_config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         if not example.exists():
             raise FileNotFoundError(f"Example config not found: {example}")
         shutil.copy2(example, path)
-    return load_config(path)
+        created = True
+    cfg = load_config(path)
+    if created:
+        cfg = _enable_discovered_accounts(cfg, path)
+    return cfg

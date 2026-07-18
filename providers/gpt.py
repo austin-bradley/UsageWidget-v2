@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from core.models import AccountConfig, AccountSnapshot, AuthConfig, Metric
-from providers.base import DiscoveredAccount, resolve_auth_path
+from providers.base import (
+    DiscoveredAccount,
+    auth_mode,
+    auth_preflight,
+    resolve_auth_path,
+)
 
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
@@ -176,6 +181,14 @@ class GptProvider:
         display_name = account.label or "GPT / Codex"
         plan = None
         try:
+            preflight = auth_preflight(account.auth)
+            if preflight:
+                raise RuntimeError(preflight)
+            if auth_mode(account.auth) == "api_key":
+                raise RuntimeError(
+                    "GPT subscription quota requires Codex OAuth; "
+                    "set auth.mode to auto or token_file and run `codex login`"
+                )
             token, account_id = _read_auth(account.auth)
             data = _request_usage(token, account_id)
             email, plan = _identity(data)

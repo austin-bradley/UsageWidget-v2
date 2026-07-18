@@ -66,9 +66,11 @@ Slots reference `account_id.metric_id`. Value modes:
 |--------|---------|
 | `percent` | `42` |
 | `remaining_pct` | `58` |
-| `reset` | `2h14m` |
+| `reset` | `2h14m` (icon uses compact `2h`) |
 | `percent_and_reset` | `42·2h` |
 | `used_of_limit` | `$12/$20` |
+
+Icon layouts: `primary_only` / `split` / `stacked_bars` / `badge_grid`. `color_by`: `percent` | `remaining_pct` | `none`.
 
 ```yaml
 active_profile: default

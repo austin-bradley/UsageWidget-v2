@@ -11,7 +11,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from core.models import AccountConfig, AccountSnapshot, AuthConfig, Metric
-from providers.base import DiscoveredAccount, resolve_auth_path
+from providers.base import (
+    DiscoveredAccount,
+    auth_mode,
+    auth_preflight,
+    resolve_auth_path,
+)
 
 
 METER_PATTERNS = [
@@ -268,8 +273,15 @@ class ClaudeProvider:
     def fetch(self, account: AccountConfig) -> AccountSnapshot:
         info: dict[str, str | bool | None] = {}
         try:
-            if not account.auth.api_key:
-                info = _read_account(account.auth)
+            preflight = auth_preflight(account.auth)
+            if preflight:
+                raise RuntimeError(preflight)
+            if auth_mode(account.auth) == "api_key":
+                raise RuntimeError(
+                    "Claude subscription usage uses the CLI login; "
+                    "set auth.mode to auto or token_file"
+                )
+            info = _read_account(account.auth)
             claude_exe = get_claude_exe()
             if not claude_exe:
                 raise RuntimeError(

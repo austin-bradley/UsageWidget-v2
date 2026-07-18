@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from core.models import AccountConfig, AccountSnapshot, AuthConfig, Metric
-from providers.base import DiscoveredAccount, resolve_auth_path
+from providers.base import DiscoveredAccount, auth_preflight, resolve_auth_path
 
 
 API_BASE = "https://api2.cursor.sh"
@@ -242,6 +242,9 @@ class CursorProvider:
 
     def fetch(self, account: AccountConfig) -> AccountSnapshot:
         try:
+            preflight = auth_preflight(account.auth)
+            if preflight:
+                raise RuntimeError(preflight)
             token = _resolve_token(account.auth)
             current_error = None
             try:

@@ -14,5 +14,10 @@ def build_tooltip(profile: DisplayProfile, snapshot: AppSnapshot) -> str:
         label = slot.label or metric.label
         pieces.append(f"{label} {format_slot(slot, metric)}")
 
-    tooltip = " | ".join(pieces) if pieces else "Usage unavailable"
+    if not pieces:
+        tooltip = "Usage unavailable"
+    elif profile.tooltip.format == "lines":
+        tooltip = "\n".join(pieces)
+    else:
+        tooltip = " | ".join(pieces)
     return tooltip[: max(0, profile.tooltip.max_chars)]

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from core.models import AccountConfig, AccountSnapshot, Metric
-from providers.base import DiscoveredAccount
+from providers.base import DiscoveredAccount, auth_preflight
 
 
 USED_KEYS = ("used_percent", "usedPercent", "usedPercentage", "percentUsed")
@@ -199,6 +199,9 @@ class GeminiProvider:
     def fetch(self, account: AccountConfig) -> AccountSnapshot:
         display_name = account.label or "Gemini CLI"
         try:
+            preflight = auth_preflight(account.auth)
+            if preflight:
+                raise RuntimeError(preflight)
             executable = _find_gemini()
             if not executable:
                 if account.auth.api_key:

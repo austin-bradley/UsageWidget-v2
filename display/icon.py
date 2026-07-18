@@ -39,6 +39,23 @@ def _color_for_pct(pct: int | None, thresholds: dict[str, int]) -> RGBA:
     return (110, 200, 120, 255)
 
 
+def _color_for_metric(
+    metric: Metric,
+    color_by: str,
+    thresholds: dict[str, int],
+) -> RGBA:
+    if color_by == "none":
+        return _TEXT
+    pct = metric.used_pct
+    if pct is None:
+        return _MUTED
+    if color_by == "remaining_pct":
+        # Thresholds still mean "usage pressure": low remaining → red.
+        # Equivalent to coloring by used_pct (remaining 10% ≈ used 90%).
+        return _color_for_pct(pct, thresholds)
+    return _color_for_pct(pct, thresholds)
+
+
 def _resolved_slots(profile: DisplayProfile, snapshot: AppSnapshot) -> list[ResolvedSlot]:
     resolved: list[ResolvedSlot] = []
     for slot in profile.icon.slots[: max(0, profile.icon.max_slots)]:
@@ -102,7 +119,7 @@ def _draw_value(
     start_size: int,
 ) -> None:
     slot, metric = item
-    color = _color_for_pct(metric.used_pct, profile.icon.thresholds)
+    color = _color_for_metric(metric, profile.icon.color_by, profile.icon.thresholds)
     value_top = box[1]
     if profile.icon.show_labels:
         label = slot.label or metric.label
@@ -170,6 +187,28 @@ def _draw_stacked_bars(
         )
 
 
+def _draw_badge_grid(
+    draw: ImageDraw.ImageDraw,
+    items: Sequence[ResolvedSlot],
+    profile: DisplayProfile,
+) -> None:
+    visible = list(items[:4])
+    boxes = (
+        (3, 3, 31, 31),
+        (33, 3, 61, 31),
+        (3, 33, 61, 61) if len(visible) == 3 else (3, 33, 31, 61),
+        (33, 33, 61, 61),
+    )
+    if len(visible) == 3:
+        # Bottom row spans full width for the third badge.
+        _draw_value(draw, boxes[0], visible[0], profile, 16)
+        _draw_value(draw, boxes[1], visible[1], profile, 16)
+        _draw_value(draw, (3, 33, 61, 61), visible[2], profile, 16)
+        return
+    for index, item in enumerate(visible):
+        _draw_value(draw, boxes[index], item, profile, 16)
+
+
 def render_icon(
     profile: DisplayProfile,
     snapshot: AppSnapshot,
@@ -191,6 +230,8 @@ def render_icon(
         _draw_value(draw, (3, 3, 61, 61), items[0], profile, 38)
     elif profile.icon.mode == "composite" and profile.icon.layout == "stacked_bars":
         _draw_stacked_bars(draw, items, profile)
+    elif profile.icon.mode == "composite" and profile.icon.layout == "badge_grid":
+        _draw_badge_grid(draw, items, profile)
     else:
         _draw_split(draw, items, profile)
     return image
