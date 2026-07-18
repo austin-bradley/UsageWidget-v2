@@ -9,7 +9,7 @@ from datetime import datetime
 
 import pystray
 
-from core.config import config_path, patch_config_toggles
+from core.config import config_path, load_config, patch_config_toggles
 from core.models import AppConfig, AppSnapshot
 from core.poller import fetch_all, merge_last_good
 from display.details import build_details
@@ -41,6 +41,7 @@ class UsageTray:
                 checked=lambda item: get_always_visible(),
             ),
             pystray.MenuItem("Open config", self._on_open_config),
+            pystray.MenuItem("Reload config", self._on_reload_config),
             pystray.MenuItem("Quit", self._on_quit),
         )
         profile = get_active_profile(self.config)
@@ -132,6 +133,15 @@ class UsageTray:
 
     def _on_open_config(self, icon, item):
         os.startfile(str(config_path()))
+
+    def _on_reload_config(self, icon, item):
+        try:
+            self.config = load_config()
+            with self._state_lock:
+                self._rotate_index = 0
+            self.refresh_async()
+        except Exception as e:
+            self._show_messagebox(f"Couldn't reload config:\n{e}")
 
     def _on_refresh(self, icon, item):
         self.refresh_async()

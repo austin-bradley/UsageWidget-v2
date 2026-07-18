@@ -12,7 +12,7 @@ pip install -r requirements.txt
 python widget.py
 ```
 
-On first run, config is seeded to `%APPDATA%\UsageWidget\config.yaml` from `config.example.yaml`. Only **Claude Personal** is enabled by default — other accounts/providers are listed but `enabled: false` so a fresh install stays quiet.
+On first run, config is seeded to `%APPDATA%\UsageWidget\config.yaml` from `config.example.yaml`. Only **Claude Personal** is enabled in the example; if Cursor/GPT/Gemini local login is already discoverable, those accounts are flipped on automatically at seed time. Use tray **Reload config** after editing the YAML.
 
 ## Build exe
 

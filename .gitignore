@@ -3,4 +3,5 @@ __pycache__/
 smoke_icon.png
 build/
 dist/
+.superpowers/sdd/
 *.spec.bak
