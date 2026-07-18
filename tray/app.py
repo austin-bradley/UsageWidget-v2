@@ -12,6 +12,7 @@ import pystray
 from core.config import config_path, load_config, patch_config_toggles
 from core.models import AppConfig, AppSnapshot
 from core.poller import fetch_all, merge_last_good, next_poll_seconds
+from core.snapshot_cache import load_snapshot, save_snapshot
 from display.details import build_details
 from display.icon import render_icon
 from display.profiles import get_active_profile
@@ -22,7 +23,8 @@ from tray.win_notify import get_always_visible, set_always_visible
 class UsageTray:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.snapshot = AppSnapshot(fetched_at=datetime.now(), accounts=[])
+        cached = load_snapshot()
+        self.snapshot = cached or AppSnapshot(fetched_at=datetime.now(), accounts=[])
         self._rotate_index = 0
         self._stop = False
         self._state_lock = threading.Lock()
@@ -166,6 +168,11 @@ class UsageTray:
                 with self._state_lock:
                     self.snapshot = merge_last_good(self.snapshot, fresh)
                     self._last_fetch_error = None
+                    to_save = self.snapshot
+                try:
+                    save_snapshot(to_save)
+                except Exception:
+                    pass
             except Exception as e:
                 # Stale-last-good: keep prior snapshot on total failure.
                 with self._state_lock:
@@ -185,6 +192,11 @@ class UsageTray:
             with self._state_lock:
                 self.snapshot = merge_last_good(self.snapshot, fresh)
                 self._last_fetch_error = None
+                to_save = self.snapshot
+            try:
+                save_snapshot(to_save)
+            except Exception:
+                pass
         except Exception as e:
             with self._state_lock:
                 self._last_fetch_error = str(e)
