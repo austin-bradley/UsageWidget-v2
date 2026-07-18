@@ -201,14 +201,13 @@ class GeminiProvider:
         try:
             executable = _find_gemini()
             if not executable:
+                if account.auth.api_key:
+                    raise RuntimeError(
+                        "API-key quota support is not available yet; "
+                        "install the Gemini CLI for subscription quota."
+                    )
                 raise RuntimeError(
-                    "Gemini CLI not found; install it and log in. "
-                    "API-key quota support is not available yet."
-                )
-            if account.auth.api_key:
-                raise RuntimeError(
-                    "Gemini subscription quota requires a logged-in Gemini CLI; "
-                    "API-key quota support is not available yet."
+                    "Gemini CLI not found; install it and log in."
                 )
             output = _run_stats(executable)
             metric = _parse_json_metric(output) or _parse_text_metric(output)
