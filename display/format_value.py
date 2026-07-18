@@ -14,6 +14,11 @@ def _fmt_countdown(reset_at: datetime | None, *, compact: bool = False) -> str:
         return "now"
     hours, remainder = divmod(seconds, 3600)
     minutes = remainder // 60
+    if hours >= 48:
+        days, rem_h = divmod(hours, 24)
+        if compact:
+            return f"{days}d"
+        return f"{days}d{rem_h}h" if rem_h else f"{days}d"
     if hours > 0:
         # Icon cells are tiny — prefer "2h" over "2h14m".
         if compact:
