@@ -1,12 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('config.example.yaml', '.')]
+binaries = []
+hiddenimports = []
+
+for pkg in ("tkinter", "_tkinter"):
+    try:
+        d, b, h = collect_all(pkg)
+        datas += d
+        binaries += b
+        hiddenimports += h
+    except Exception:
+        pass
 
 a = Analysis(
     ['widget.py'],
     pathex=[],
-    binaries=[],
-    datas=[('config.example.yaml', '.')],
-    hiddenimports=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

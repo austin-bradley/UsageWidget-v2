@@ -303,6 +303,35 @@ def patch_config_toggles(cfg: AppConfig, path: Path | None = None) -> None:
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
+def patch_config_profile_display(cfg: AppConfig, path: Path | None = None) -> None:
+    """Update only the active profile's ``icon`` and ``tooltip`` in existing YAML."""
+    path = path or config_path()
+    if not path.exists():
+        save_config(cfg, path)
+        return
+    profile = cfg.profiles.get(cfg.active_profile)
+    if profile is None:
+        return
+    with path.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    profiles = data.setdefault("profiles", {})
+    if not isinstance(profiles, dict):
+        profiles = {}
+        data["profiles"] = profiles
+    name = cfg.active_profile
+    entry = profiles.get(name) if isinstance(profiles.get(name), dict) else {}
+    entry = dict(entry)
+    entry["icon"] = _icon_to_dict(profile.icon)
+    entry["tooltip"] = _tooltip_to_dict(profile.tooltip)
+    if "details" not in entry:
+        entry["details"] = _details_to_dict(profile.details)
+    profiles[name] = entry
+    data["active_profile"] = cfg.active_profile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
 def _enable_discovered_accounts(cfg: AppConfig, path: Path) -> AppConfig:
     """On first-run seed, enable optional accounts whose providers are discoverable.
 

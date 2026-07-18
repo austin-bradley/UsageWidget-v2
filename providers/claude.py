@@ -199,7 +199,8 @@ def _run_usage(claude_exe: str, auth: AuthConfig) -> str:
     run_kwargs: dict = {
         "capture_output": True,
         "encoding": "utf-8",
-        "timeout": 20,
+        # Cold starts / busy Claude Desktop can exceed 20s on Store builds.
+        "timeout": 45,
         "stdin": subprocess.DEVNULL,
         "env": _usage_environment(auth),
     }

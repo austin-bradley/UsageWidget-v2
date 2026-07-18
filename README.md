@@ -109,7 +109,9 @@ If auth or endpoints aren’t ready, the account degrades to a clear error and d
 
 ## Tray menu
 
-Show details · Refresh now · Display profile · Accounts · Always visible · **Settings** (Open / Reload / Reset config, Copy details, Open log, About) · Quit
+Show details · Refresh now · **Display options…** (icon + tooltip slots, drag-reorder tooltip rows, presets) · Display profile · Accounts · Always visible · **Settings** (same Display options, Open / Reload / Reset config, Copy details, Open log, About) · Quit
+
+**Display options** writes the active profile’s icon/tooltip into `%APPDATA%\UsageWidget\config.yaml` and refreshes immediately (no restart). YAML editing + **Reload config** still works. Prefer a **single large %** on the icon — Windows draws tray icons very small.
 
 ## Autostart (optional)
 
@@ -129,5 +131,6 @@ Add `providers/<name>.py`, register in `providers/registry.py`, add a YAML accou
 - Leaves v1 `ClaudeUsageWidget` / `ClaudeUsage.exe` untouched
 - Config: `%APPDATA%\UsageWidget\config.yaml`
 - Log: `%APPDATA%\UsageWidget\widget.log`
-- Last snapshot cache: `%APPDATA%\UsageWidget\last_snapshot.json` (instant metrics after restart)
+- Last snapshot cache: `%APPDATA%\UsageWidget\last_snapshot.json` (merge baseline only; UI starts with “starting…” until the first poll)
+- Details opens one window (repeat clicks focus/update it; they do not stack)
 - One failing provider must not blank the others (last-good metrics when possible)

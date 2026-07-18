@@ -15,6 +15,7 @@ from core.config import (
     config_path,
     example_config_path,
     load_config,
+    patch_config_profile_display,
     patch_config_toggles,
 )
 from core.models import AppConfig, AppSnapshot
@@ -25,6 +26,8 @@ from display.details import build_details
 from display.icon import render_icon
 from display.profiles import get_active_profile
 from display.tooltip import build_tooltip
+from tray.details_window import show_details
+from tray.display_options import open_display_options
 from tray.win_notify import get_always_visible, set_always_visible
 
 # Disk cache older than this is ignored as a merge baseline.
@@ -92,6 +95,7 @@ class UsageTray:
             pystray.MenuItem("Show details", self._on_details, default=True),
             pystray.MenuItem("Refresh now", self._on_refresh),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Display options…", self._on_display_options),
             pystray.MenuItem("Display profile", pystray.Menu(self._profile_menu)),
             pystray.MenuItem("Accounts", pystray.Menu(self._accounts_menu)),
             pystray.MenuItem(
@@ -116,6 +120,7 @@ class UsageTray:
 
     def _settings_menu(self):
         return pystray.Menu(
+            pystray.MenuItem("Display options…", self._on_display_options),
             pystray.MenuItem("Open config", self._on_open_config),
             pystray.MenuItem("Reload config", self._on_reload_config),
             pystray.MenuItem("Reset config to example", self._on_reset_config),
@@ -125,6 +130,25 @@ class UsageTray:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("About", self._on_about),
         )
+
+    def _get_display_state(self) -> tuple[AppConfig, AppSnapshot]:
+        with self._state_lock:
+            return self.config, self.snapshot
+
+    def _on_display_options(self, icon, item):
+        open_display_options(
+            get_state=self._get_display_state,
+            on_save=self._on_display_options_save,
+        )
+
+    def _on_display_options_save(self, cfg: AppConfig) -> None:
+        patch_config_profile_display(cfg)
+        self.config = load_config()
+        with self._state_lock:
+            self._rotate_index = 0
+            self.snapshot = filter_enabled(self.snapshot, self.config)
+        log_event("display options saved")
+        self.refresh_async()
 
     def _on_about(self, icon, item):
         path = config_path()
@@ -223,7 +247,7 @@ class UsageTray:
             text = build_details(profile, snapshot)
             if fetch_error:
                 text = f"Last refresh failed: {fetch_error}\n\n{text}"
-        threading.Thread(target=self._show_messagebox, args=(text,), daemon=True).start()
+        show_details(self.config.app_name, text)
 
     def _on_toggle_visible(self, icon, item):
         want = not get_always_visible()

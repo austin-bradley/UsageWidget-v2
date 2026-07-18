@@ -164,11 +164,11 @@ def _draw_split(
             visible[0][1], profile.icon.color_by, profile.icon.thresholds
         )
         _draw_status_ring(draw, color)
-        _draw_value(draw, (4, 4, 60, 60), visible[0], profile, 36)
+        _draw_value(draw, (4, 4, 60, 60), visible[0], profile, 44)
         return
     draw.line((32, 10, 32, 54), fill=_DIVIDER, width=1)
-    _draw_value(draw, (4, 4, 31, 60), visible[0], profile, 22)
-    _draw_value(draw, (33, 4, 60, 60), visible[1], profile, 22)
+    _draw_value(draw, (2, 4, 31, 60), visible[0], profile, 24)
+    _draw_value(draw, (33, 4, 62, 60), visible[1], profile, 24)
 
 
 def _draw_stacked_bars(
@@ -262,13 +262,13 @@ def render_icon(
             selected[1], profile.icon.color_by, profile.icon.thresholds
         )
         _draw_status_ring(draw, color)
-        _draw_value(draw, (4, 4, 60, 60), selected, profile, 36)
+        _draw_value(draw, (4, 4, 60, 60), selected, profile, 44)
     elif profile.icon.mode == "single" or profile.icon.layout == "primary_only":
         color = _color_for_metric(
             items[0][1], profile.icon.color_by, profile.icon.thresholds
         )
         _draw_status_ring(draw, color)
-        _draw_value(draw, (4, 4, 60, 60), items[0], profile, 36)
+        _draw_value(draw, (4, 4, 60, 60), items[0], profile, 44)
     elif profile.icon.mode == "composite" and profile.icon.layout == "stacked_bars":
         _draw_stacked_bars(draw, items, profile)
     elif profile.icon.mode == "composite" and profile.icon.layout == "badge_grid":
