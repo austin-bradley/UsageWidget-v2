@@ -23,7 +23,10 @@ METER_PATTERNS = [
     ("session", "Session", r"Current session"),
     ("week", "Week (all models)", r"Current week \(all models\)"),
     ("fable_week", "Week (Fable)", r"Current week \(Fable\)"),
-    ("api", "API", r"API(?: usage)?"),
+    # Optional API meter — labels vary by CLI/plan; match common forms.
+    ("api", "API", r"(?:Current\s+)?API(?:\s+usage)?(?:\s+limit)?"),
+    ("api", "API", r"Extra usage"),
+    ("api", "API", r"Pay-as-you-go"),
 ]
 
 
@@ -231,10 +234,14 @@ def _run_usage(claude_exe: str, auth: AuthConfig) -> str:
 
 def _parse_metrics(text: str) -> list[Metric]:
     metrics = []
+    seen_ids: set[str] = set()
     for metric_id, label, label_re in METER_PATTERNS:
+        if metric_id in seen_ids:
+            continue
         match = _meter_re(label_re).search(text)
         if not match:
             continue
+        seen_ids.add(metric_id)
         metrics.append(
             Metric(
                 id=metric_id,

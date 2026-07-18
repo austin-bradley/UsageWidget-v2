@@ -67,3 +67,16 @@ def next_poll_seconds(config: AppConfig) -> int:
         if account.enabled and account.poll_seconds:
             seconds.append(account.poll_seconds)
     return max(1, min(seconds))
+
+
+def filter_enabled(snapshot: AppSnapshot, config: AppConfig) -> AppSnapshot:
+    """Drop cached/disabled accounts so the tray only shows enabled ones."""
+    enabled = {account.id for account in config.accounts if account.enabled}
+    return AppSnapshot(
+        fetched_at=snapshot.fetched_at,
+        accounts=[
+            account
+            for account in snapshot.accounts
+            if account.account_id in enabled
+        ],
+    )

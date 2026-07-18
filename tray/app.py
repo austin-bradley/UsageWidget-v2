@@ -9,9 +9,10 @@ from datetime import datetime
 
 import pystray
 
+from core.app_log import log_event, log_path
 from core.config import config_path, load_config, patch_config_toggles
 from core.models import AppConfig, AppSnapshot
-from core.poller import fetch_all, merge_last_good, next_poll_seconds
+from core.poller import fetch_all, filter_enabled, merge_last_good, next_poll_seconds
 from core.snapshot_cache import load_snapshot, save_snapshot
 from display.details import build_details
 from display.icon import render_icon
@@ -24,7 +25,10 @@ class UsageTray:
     def __init__(self, config: AppConfig):
         self.config = config
         cached = load_snapshot()
-        self.snapshot = cached or AppSnapshot(fetched_at=datetime.now(), accounts=[])
+        if cached is not None:
+            self.snapshot = filter_enabled(cached, config)
+        else:
+            self.snapshot = AppSnapshot(fetched_at=datetime.now(), accounts=[])
         self._rotate_index = 0
         self._stop = False
         self._state_lock = threading.Lock()
@@ -44,8 +48,10 @@ class UsageTray:
             ),
             pystray.MenuItem("Open config", self._on_open_config),
             pystray.MenuItem("Reload config", self._on_reload_config),
+            pystray.MenuItem("Open log", self._on_open_log),
             pystray.MenuItem("Quit", self._on_quit),
         )
+        log_event(f"tray start ({len(config.accounts)} accounts configured)")
         profile = get_active_profile(self.config)
         self.icon = pystray.Icon(
             "usage-widget",
@@ -141,9 +147,22 @@ class UsageTray:
             self.config = load_config()
             with self._state_lock:
                 self._rotate_index = 0
+                self.snapshot = filter_enabled(self.snapshot, self.config)
+            log_event("config reloaded")
             self.refresh_async()
         except Exception as e:
+            log_event(f"config reload failed: {e}")
             self._show_messagebox(f"Couldn't reload config:\n{e}")
+
+    def _on_open_log(self, icon, item):
+        path = log_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_text("", encoding="utf-8")
+            os.startfile(str(path))
+        except Exception as e:
+            self._show_messagebox(f"Couldn't open log:\n{e}")
 
     def _on_refresh(self, icon, item):
         self.refresh_async()
@@ -165,18 +184,23 @@ class UsageTray:
         while True:
             try:
                 fresh = fetch_all(self.config)
+                fresh = filter_enabled(fresh, self.config)
                 with self._state_lock:
                     self.snapshot = merge_last_good(self.snapshot, fresh)
                     self._last_fetch_error = None
                     to_save = self.snapshot
+                for account in to_save.accounts:
+                    if account.error:
+                        log_event(f"{account.account_id}: {account.error}")
                 try:
                     save_snapshot(to_save)
-                except Exception:
-                    pass
+                except Exception as cache_error:
+                    log_event(f"snapshot cache write failed: {cache_error}")
             except Exception as e:
                 # Stale-last-good: keep prior snapshot on total failure.
                 with self._state_lock:
                     self._last_fetch_error = str(e)
+                log_event(f"refresh failed: {e}")
             self._render()
             with self._state_lock:
                 if not self._refresh_pending or self._stop:
@@ -189,6 +213,7 @@ class UsageTray:
         """Compatibility helper for smokes/tests — runs a single fetch inline."""
         try:
             fresh = fetch_all(self.config)
+            fresh = filter_enabled(fresh, self.config)
             with self._state_lock:
                 self.snapshot = merge_last_good(self.snapshot, fresh)
                 self._last_fetch_error = None
@@ -200,6 +225,7 @@ class UsageTray:
         except Exception as e:
             with self._state_lock:
                 self._last_fetch_error = str(e)
+            log_event(f"refresh failed: {e}")
         self._render()
 
     def _render(self) -> None:

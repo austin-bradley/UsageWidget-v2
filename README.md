@@ -105,7 +105,16 @@ If auth or endpoints aren’t ready, the account degrades to a clear error and d
 
 ## Tray menu
 
-Show details · Refresh now · Display profile · Accounts · Always visible · Open config · Quit
+Show details · Refresh now · Display profile · Accounts · Always visible · Open config · Reload config · Open log · Quit
+
+## Autostart (optional)
+
+```powershell
+.\scripts\install-autostart.ps1
+# or:
+.\scripts\install-autostart.ps1 -ExePath "C:\Users\austi\UsageWidget-v2\dist\UsageWidget-v2.exe"
+.\scripts\install-autostart.ps1 -Remove
+```
 
 ## Extending providers
 
@@ -114,5 +123,7 @@ Add `providers/<name>.py`, register in `providers/registry.py`, add a YAML accou
 ## Notes
 
 - Leaves v1 `ClaudeUsageWidget` / `ClaudeUsage.exe` untouched
-- Config path: `%APPDATA%\UsageWidget\config.yaml`
+- Config: `%APPDATA%\UsageWidget\config.yaml`
+- Log: `%APPDATA%\UsageWidget\widget.log`
+- Last snapshot cache: `%APPDATA%\UsageWidget\last_snapshot.json` (instant metrics after restart)
 - One failing provider must not blank the others (last-good metrics when possible)

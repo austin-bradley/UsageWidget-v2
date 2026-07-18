@@ -142,9 +142,38 @@ def _parse_config(data: dict[str, Any]) -> AppConfig:
 
 def load_config(path: Path | None = None) -> AppConfig:
     path = path or config_path()
-    with path.open(encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    return _parse_config(data)
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as error:
+        raise RuntimeError(f"Invalid YAML in {path}: {error}") from error
+    except OSError as error:
+        raise RuntimeError(f"Couldn't read config {path}: {error}") from error
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Config root must be a mapping: {path}")
+    try:
+        cfg = _parse_config(data)
+    except KeyError as error:
+        raise RuntimeError(
+            f"Config {path} is missing required field {error}"
+        ) from error
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"Config {path} is invalid: {error}") from error
+
+    account_ids = [account.id for account in cfg.accounts]
+    if len(account_ids) != len(set(account_ids)):
+        raise RuntimeError(f"Config {path} has duplicate account ids")
+    if cfg.profiles and cfg.active_profile not in cfg.profiles:
+        raise RuntimeError(
+            f"Config {path}: active_profile {cfg.active_profile!r} "
+            f"not found in profiles"
+        )
+    for account in cfg.accounts:
+        if account.poll_seconds is not None and int(account.poll_seconds) < 1:
+            raise RuntimeError(
+                f"Config {path}: account {account.id} poll_seconds must be >= 1"
+            )
+    return cfg
 
 
 def _slot_to_dict(slot: DisplaySlot) -> dict[str, Any] | str:
