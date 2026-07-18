@@ -9,9 +9,9 @@ from datetime import datetime
 
 import pystray
 
-from core.config import config_path, save_config
+from core.config import config_path, patch_config_toggles
 from core.models import AppConfig, AppSnapshot
-from core.poller import fetch_all
+from core.poller import fetch_all, merge_last_good
 from display.details import build_details
 from display.icon import render_icon
 from display.profiles import get_active_profile
@@ -85,7 +85,7 @@ class UsageTray:
     def _make_profile_handler(self, name: str):
         def handler(icon, item):
             self.config.active_profile = name
-            save_config(self.config)
+            patch_config_toggles(self.config)
             self._rotate_index = 0
             self._render()
 
@@ -97,7 +97,7 @@ class UsageTray:
                 if account.id == account_id:
                     account.enabled = not account.enabled
                     break
-            save_config(self.config)
+            patch_config_toggles(self.config)
             self.refresh_async()
 
         return handler
@@ -135,7 +135,8 @@ class UsageTray:
 
     def _refresh_once(self) -> None:
         try:
-            self.snapshot = fetch_all(self.config)
+            fresh = fetch_all(self.config)
+            self.snapshot = merge_last_good(self.snapshot, fresh)
         except Exception:
             # Stale-last-good: keep prior snapshot on total failure.
             pass

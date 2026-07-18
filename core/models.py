@@ -38,8 +38,11 @@ class AppSnapshot:
 class AuthConfig:
     mode: str = "auto"  # auto | api_key | token_file
     api_key: str | None = None
-    token_file: str | None = None
-    claude_home: str | None = None  # multi-account override
+    token_file: str | None = None  # expanded for runtime
+    claude_home: str | None = None  # expanded for runtime
+    # Original YAML tokens (e.g. "~/...") so save_config can round-trip without expanding.
+    token_file_raw: str | None = None
+    claude_home_raw: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 

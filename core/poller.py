@@ -5,6 +5,29 @@ from core.models import AppConfig, AppSnapshot, AccountSnapshot
 from providers.registry import get_provider
 
 
+def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
+    """Keep prior metrics/plan/login when an account fails; surface the new error."""
+    prev_by_id = {a.account_id: a for a in previous.accounts}
+    merged: list[AccountSnapshot] = []
+    for acct in new.accounts:
+        prev = prev_by_id.get(acct.account_id)
+        if acct.error is not None and prev is not None and prev.metrics:
+            merged.append(
+                AccountSnapshot(
+                    account_id=acct.account_id,
+                    provider_id=acct.provider_id,
+                    display_name=acct.display_name,
+                    logged_in=prev.logged_in,
+                    plan=prev.plan if prev.plan is not None else acct.plan,
+                    metrics=list(prev.metrics),
+                    error=acct.error,
+                )
+            )
+        else:
+            merged.append(acct)
+    return AppSnapshot(fetched_at=new.fetched_at, accounts=merged)
+
+
 def fetch_all(config: AppConfig) -> AppSnapshot:
     enabled = [a for a in config.accounts if a.enabled]
     accounts: list[AccountSnapshot] = []

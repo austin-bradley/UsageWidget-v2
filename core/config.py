@@ -55,11 +55,15 @@ def _parse_auth(raw: dict[str, Any] | None) -> AuthConfig:
         return AuthConfig()
     known = {"mode", "api_key", "token_file", "claude_home"}
     extra = {k: v for k, v in raw.items() if k not in known}
+    token_raw = raw.get("token_file")
+    home_raw = raw.get("claude_home")
     return AuthConfig(
         mode=raw.get("mode", "auto"),
         api_key=raw.get("api_key"),
-        token_file=_expand_path(raw.get("token_file")),
-        claude_home=_expand_path(raw.get("claude_home")),
+        token_file=_expand_path(token_raw),
+        claude_home=_expand_path(home_raw),
+        token_file_raw=token_raw,
+        claude_home_raw=home_raw,
         extra=extra,
     )
 
@@ -156,10 +160,12 @@ def _auth_to_dict(auth: AuthConfig) -> dict[str, Any]:
     result: dict[str, Any] = {"mode": auth.mode}
     if auth.api_key is not None:
         result["api_key"] = auth.api_key
-    if auth.token_file is not None:
-        result["token_file"] = auth.token_file
-    if auth.claude_home is not None:
-        result["claude_home"] = auth.claude_home
+    token_out = auth.token_file_raw if auth.token_file_raw is not None else auth.token_file
+    home_out = auth.claude_home_raw if auth.claude_home_raw is not None else auth.claude_home
+    if token_out is not None:
+        result["token_file"] = token_out
+    if home_out is not None:
+        result["claude_home"] = home_out
     result.update(auth.extra)
     return result
 
@@ -230,9 +236,40 @@ def _config_to_dict(cfg: AppConfig) -> dict[str, Any]:
 
 
 def save_config(cfg: AppConfig, path: Path | None = None) -> None:
+    """Persist config.
+
+    Tray toggles should prefer ``patch_config_toggles`` so hand-edited YAML
+    (paths with ``~``, display sections) is not rebuilt from dataclasses.
+    Full dumps still write original path tokens via ``*_raw`` fields when present.
+    Comments are not preserved (PyYAML); edit carefully or avoid tray toggles
+    if you rely on comments.
+    """
     path = path or config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _config_to_dict(cfg)
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
+def patch_config_toggles(cfg: AppConfig, path: Path | None = None) -> None:
+    """Update only ``active_profile`` and per-account ``enabled`` in existing YAML.
+
+    Loads the on-disk document, patches those fields, and writes it back so
+    ``token_file`` / ``claude_home`` strings (including ``~``) and display
+    sections are not reconstructed from runtime-expanded dataclasses.
+    """
+    path = path or config_path()
+    if not path.exists():
+        save_config(cfg, path)
+        return
+    with path.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    data["active_profile"] = cfg.active_profile
+    enabled_by_id = {a.id: a.enabled for a in cfg.accounts}
+    for acct in data.get("accounts") or []:
+        if isinstance(acct, dict) and acct.get("id") in enabled_by_id:
+            acct["enabled"] = enabled_by_id[acct["id"]]
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
