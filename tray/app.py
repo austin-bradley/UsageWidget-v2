@@ -29,8 +29,8 @@ class UsageTray:
         menu = pystray.Menu(
             pystray.MenuItem("Show details", self._on_details, default=True),
             pystray.MenuItem("Refresh now", self._on_refresh),
-            pystray.MenuItem("Display profile", self._profile_menu),
-            pystray.MenuItem("Accounts", self._accounts_menu),
+            pystray.MenuItem("Display profile", pystray.Menu(self._profile_menu)),
+            pystray.MenuItem("Accounts", pystray.Menu(self._accounts_menu)),
             pystray.MenuItem(
                 "Always visible",
                 self._on_toggle_visible,
