@@ -58,3 +58,12 @@ def fetch_all(config: AppConfig) -> AppSnapshot:
     order = {a.id: i for i, a in enumerate(enabled)}
     accounts.sort(key=lambda s: order.get(s.account_id, 999))
     return AppSnapshot(fetched_at=datetime.now(), accounts=accounts)
+
+
+def next_poll_seconds(config: AppConfig) -> int:
+    """Global poll interval, optionally tightened by per-account overrides."""
+    seconds = [config.poll_seconds]
+    for account in config.accounts:
+        if account.enabled and account.poll_seconds:
+            seconds.append(account.poll_seconds)
+    return max(1, min(seconds))

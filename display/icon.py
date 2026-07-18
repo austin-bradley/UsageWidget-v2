@@ -220,7 +220,15 @@ def render_icon(
 
     items = _resolved_slots(profile, snapshot)
     if not items:
-        _draw_centered_text(draw, (3, 3, 61, 61), "?", _MUTED, 40)
+        # Prefer "!" when accounts reported errors (auth/setup), else "?".
+        has_error = any(account.error for account in snapshot.accounts)
+        _draw_centered_text(
+            draw,
+            (3, 3, 61, 61),
+            "!" if has_error else "?",
+            (224, 90, 90, 255) if has_error else _MUTED,
+            40,
+        )
         return image
 
     if profile.icon.mode == "rotate":

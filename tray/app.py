@@ -11,7 +11,7 @@ import pystray
 
 from core.config import config_path, load_config, patch_config_toggles
 from core.models import AppConfig, AppSnapshot
-from core.poller import fetch_all, merge_last_good
+from core.poller import fetch_all, merge_last_good, next_poll_seconds
 from display.details import build_details
 from display.icon import render_icon
 from display.profiles import get_active_profile
@@ -212,7 +212,7 @@ class UsageTray:
                 self.refresh_async()
             except Exception:
                 pass
-            for _ in range(max(1, self.config.poll_seconds)):
+            for _ in range(next_poll_seconds(self.config)):
                 if self._stop:
                     return
                 time.sleep(1)
