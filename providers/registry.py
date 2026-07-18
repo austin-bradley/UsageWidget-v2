@@ -1,9 +1,14 @@
 from providers.claude import ClaudeProvider
+from providers.cursor import CursorProvider
+from providers.gemini import GeminiProvider
+from providers.gpt import GptProvider
 
 
-# Cursor, GPT, and Gemini are registered in Task 6.
 PROVIDERS = {
     "claude": ClaudeProvider(),
+    "cursor": CursorProvider(),
+    "gpt": GptProvider(),
+    "gemini": GeminiProvider(),
 }
 
 
