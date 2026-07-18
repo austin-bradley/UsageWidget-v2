@@ -19,6 +19,8 @@ On first run, config is seeded to `%APPDATA%\UsageWidget\config.yaml` from `conf
 ## Build exe
 
 ```powershell
+.\scripts\build.ps1
+# or:
 pip install pyinstaller
 python -m PyInstaller UsageWidget-v2.spec
 ```
@@ -107,7 +109,7 @@ If auth or endpoints aren’t ready, the account degrades to a clear error and d
 
 ## Tray menu
 
-Show details · Refresh now · Display profile · Accounts · Always visible · **Settings** (Open / Reload / Reset config, Copy details, Open log) · Quit
+Show details · Refresh now · Display profile · Accounts · Always visible · **Settings** (Open / Reload / Reset config, Copy details, Open log, About) · Quit
 
 ## Autostart (optional)
 

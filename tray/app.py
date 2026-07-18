@@ -20,11 +20,15 @@ from core.config import (
 from core.models import AppConfig, AppSnapshot
 from core.poller import fetch_all, filter_enabled, merge_last_good, next_poll_seconds
 from core.snapshot_cache import load_snapshot, save_snapshot
+from core.version import APP_NAME, APP_VERSION
 from display.details import build_details
 from display.icon import render_icon
 from display.profiles import get_active_profile
 from display.tooltip import build_tooltip
 from tray.win_notify import get_always_visible, set_always_visible
+
+# Disk cache older than this is ignored as a merge baseline.
+_CACHE_MAX_AGE_SECONDS = 6 * 60 * 60
 
 
 def _set_clipboard_text(text: str) -> None:
@@ -72,7 +76,7 @@ class UsageTray:
         self.config = config
         # Keep disk cache as merge baseline only — do not paint unverified meters
         # (avoids showing stale % after logout until the first poll finishes).
-        cached = load_snapshot()
+        cached = load_snapshot(max_age_seconds=_CACHE_MAX_AGE_SECONDS)
         self._merge_baseline = (
             filter_enabled(cached, config) if cached is not None else None
         )
@@ -118,7 +122,18 @@ class UsageTray:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Copy details to clipboard", self._on_copy_details),
             pystray.MenuItem("Open log", self._on_open_log),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("About", self._on_about),
         )
+
+    def _on_about(self, icon, item):
+        path = config_path()
+        text = (
+            f"{APP_NAME} {APP_VERSION}\n\n"
+            f"Config:\n{path}\n\n"
+            "Multi-provider tray usage meters for Claude, Cursor, GPT, and Gemini."
+        )
+        threading.Thread(target=self._show_messagebox, args=(text,), daemon=True).start()
 
     def _on_copy_details(self, icon, item):
         profile = get_active_profile(self.config)

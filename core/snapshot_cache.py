@@ -70,7 +70,11 @@ def save_snapshot(snapshot: AppSnapshot, path: Path | None = None) -> None:
     tmp.replace(path)
 
 
-def load_snapshot(path: Path | None = None) -> AppSnapshot | None:
+def load_snapshot(
+    path: Path | None = None,
+    *,
+    max_age_seconds: int | None = None,
+) -> AppSnapshot | None:
     path = path or cache_path()
     if not path.is_file():
         return None
@@ -85,6 +89,13 @@ def load_snapshot(path: Path | None = None) -> AppSnapshot | None:
             if isinstance(fetched_raw, str)
             else datetime.now()
         )
+        if max_age_seconds is not None:
+            fetched_naive = (
+                fetched_at.replace(tzinfo=None) if fetched_at.tzinfo else fetched_at
+            )
+            age = (datetime.now() - fetched_naive).total_seconds()
+            if age < 0 or age > max_age_seconds:
+                return None
         accounts: list[AccountSnapshot] = []
         for raw in data.get("accounts") or []:
             if not isinstance(raw, dict):

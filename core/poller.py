@@ -77,8 +77,13 @@ def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
 
         # Soft empty success: keep last meters rather than blanking the icon.
         # Also clears a prior transient error when the latest poll "succeeded"
-        # with no parseable meters.
-        if not acct.metrics and prev is not None and prev.metrics:
+        # with no parseable meters. Do not retain meters when logged out.
+        if (
+            not acct.metrics
+            and acct.logged_in
+            and prev is not None
+            and prev.metrics
+        ):
             merged.append(
                 AccountSnapshot(
                     account_id=acct.account_id,

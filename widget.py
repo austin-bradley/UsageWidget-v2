@@ -7,6 +7,7 @@ import traceback
 
 from core.app_log import log_event
 from core.config import ensure_config
+from core.version import APP_NAME
 from tray.app import UsageTray
 from tray.single_instance import ensure_single_instance, release_single_instance
 
@@ -20,7 +21,7 @@ def _fatal(title: str, message: str) -> None:
 
 
 def main() -> int:
-    if not ensure_single_instance("Usage Widget v2"):
+    if not ensure_single_instance(APP_NAME):
         return 0
     try:
         cfg = ensure_config()
@@ -28,7 +29,7 @@ def main() -> int:
         return 0
     except Exception as error:
         detail = f"{error}\n\n{traceback.format_exc()[-1200:]}"
-        _fatal("Usage Widget v2", f"Couldn't start:\n\n{error}")
+        _fatal(APP_NAME, f"Couldn't start:\n\n{error}")
         try:
             log_event(detail.replace("\n", " | "))
         except Exception:
