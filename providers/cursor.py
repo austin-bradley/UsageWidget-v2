@@ -24,6 +24,7 @@ API_BASE = "https://api2.cursor.sh"
 CURRENT_USAGE_URL = (
     API_BASE + "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 )
+PLAN_INFO_URL = API_BASE + "/aiserver.v1.DashboardService/GetPlanInfo"
 LEGACY_USAGE_URL = API_BASE + "/auth/usage"
 
 
@@ -168,30 +169,141 @@ def _timestamp(value: Any) -> datetime | None:
         return None
 
 
-def _current_metric(data: dict[str, Any]) -> Metric | None:
-    usage = data.get("planUsage")
-    if not isinstance(usage, dict):
+def _usd_metric(
+    metric_id: str,
+    label: str,
+    *,
+    used_cents: float | None,
+    limit_cents: float | None,
+    resets_at: datetime | None,
+    used_pct: float | None = None,
+    extra: dict[str, Any] | None = None,
+) -> Metric | None:
+    if used_cents is None and used_pct is None and limit_cents is None:
         return None
-    limit_cents = _number(usage.get("limit"))
-    used_pct = _number(usage.get("totalPercentUsed"))
-    used_cents = _number(usage.get("used"))
-    if used_cents is None and used_pct is not None and limit_cents is not None:
-        used_cents = limit_cents * used_pct / 100
-    if used_cents is None:
-        used_cents = _number(usage.get("totalSpend"))
     if used_pct is None and used_cents is not None and limit_cents:
         used_pct = used_cents / limit_cents * 100
-    if used_cents is None and used_pct is None:
-        return None
     return Metric(
-        id="included",
-        label="Included",
+        id=metric_id,
+        label=label,
         used_pct=round(used_pct) if used_pct is not None else None,
         used=used_cents / 100 if used_cents is not None else None,
         limit=limit_cents / 100 if limit_cents is not None else None,
         unit="usd" if used_cents is not None or limit_cents is not None else "percent",
-        resets_at=_timestamp(data.get("billingCycleEnd")),
+        resets_at=resets_at,
+        extra=extra or {},
     )
+
+
+def _pct_metric(
+    metric_id: str,
+    label: str,
+    pct: float | None,
+    resets_at: datetime | None,
+) -> Metric | None:
+    if pct is None:
+        return None
+    return Metric(
+        id=metric_id,
+        label=label,
+        used_pct=round(pct),
+        unit="percent",
+        resets_at=resets_at,
+    )
+
+
+def _current_metrics(data: dict[str, Any]) -> list[Metric]:
+    """Map GetCurrentPeriodUsage into monthly / pool / on-demand meters."""
+    resets_at = _timestamp(data.get("billingCycleEnd"))
+    metrics: list[Metric] = []
+    usage = data.get("planUsage")
+    if isinstance(usage, dict):
+        limit_cents = _number(usage.get("limit"))
+        included_cents = _number(usage.get("includedSpend"))
+        remaining_cents = _number(usage.get("remaining"))
+        if included_cents is None and remaining_cents is not None and limit_cents is not None:
+            included_cents = max(0.0, limit_cents - remaining_cents)
+
+        monthly = _usd_metric(
+            "included",
+            "Monthly included",
+            used_cents=included_cents,
+            limit_cents=limit_cents,
+            resets_at=resets_at,
+        )
+        if monthly is not None:
+            metrics.append(monthly)
+
+        bonus_cents = _number(usage.get("bonusSpend"))
+        if bonus_cents is not None and bonus_cents > 0:
+            metrics.append(
+                Metric(
+                    id="bonus",
+                    label="Bonus pool",
+                    used=bonus_cents / 100,
+                    unit="usd",
+                    resets_at=resets_at,
+                    extra={"remaining_bonus": bool(usage.get("remainingBonus"))},
+                )
+            )
+
+        auto = _pct_metric("auto", "Auto pool", _number(usage.get("autoPercentUsed")), resets_at)
+        if auto is not None:
+            metrics.append(auto)
+        api = _pct_metric("api", "API pool", _number(usage.get("apiPercentUsed")), resets_at)
+        if api is not None:
+            metrics.append(api)
+
+        total_spend = _number(usage.get("totalSpend"))
+        total_pct = _number(usage.get("totalPercentUsed"))
+        # Combined spend (included + bonus) — useful context, not the plan cap.
+        if total_spend is not None or total_pct is not None:
+            metrics.append(
+                Metric(
+                    id="total",
+                    label="Total spend",
+                    used_pct=round(total_pct) if total_pct is not None else None,
+                    used=total_spend / 100 if total_spend is not None else None,
+                    unit="usd" if total_spend is not None else "percent",
+                    resets_at=resets_at,
+                )
+            )
+
+    spend = data.get("spendLimitUsage")
+    if isinstance(spend, dict):
+        pooled_limit = _number(spend.get("pooledLimit"))
+        pooled_used = _number(spend.get("pooledUsed"))
+        pooled_remaining = _number(spend.get("pooledRemaining"))
+        if pooled_used is None and pooled_limit is not None and pooled_remaining is not None:
+            pooled_used = max(0.0, pooled_limit - pooled_remaining)
+        pooled = _usd_metric(
+            "pooled",
+            "Team pool",
+            used_cents=pooled_used,
+            limit_cents=pooled_limit,
+            resets_at=resets_at,
+            extra={"limit_type": spend.get("limitType")},
+        )
+        if pooled is not None:
+            metrics.append(pooled)
+
+        ind_limit = _number(spend.get("individualLimit"))
+        ind_used = _number(spend.get("individualUsed"))
+        ind_remaining = _number(spend.get("individualRemaining"))
+        if ind_used is None and ind_limit is not None and ind_remaining is not None:
+            ind_used = max(0.0, ind_limit - ind_remaining)
+        on_demand = _usd_metric(
+            "on_demand",
+            "On-demand cap",
+            used_cents=ind_used if ind_used is not None else 0.0 if ind_limit is not None else None,
+            limit_cents=ind_limit,
+            resets_at=resets_at,
+            extra={"limit_type": spend.get("limitType")},
+        )
+        if on_demand is not None:
+            metrics.append(on_demand)
+
+    return metrics
 
 
 def _next_month(value: Any) -> datetime | None:
@@ -253,30 +365,42 @@ class CursorProvider:
             if preflight:
                 raise RuntimeError(preflight)
             token = _resolve_token(account.auth)
+            plan_name: str | None = None
+            try:
+                plan_payload = _request_json(PLAN_INFO_URL, token, post=True)
+                info = plan_payload.get("planInfo")
+                if isinstance(info, dict) and isinstance(info.get("planName"), str):
+                    plan_name = info["planName"]
+            except Exception:
+                plan_name = None
+
             current_error = None
+            metrics: list[Metric] = []
             try:
                 current = _request_json(CURRENT_USAGE_URL, token, post=True)
-                metric = _current_metric(current)
+                metrics = _current_metrics(current)
             except Exception as error:
                 current_error = str(error)
-                metric = None
-            if metric is None:
+                metrics = []
+            if not metrics:
                 try:
-                    metric = _legacy_metric(_request_json(LEGACY_USAGE_URL, token))
+                    legacy = _legacy_metric(_request_json(LEGACY_USAGE_URL, token))
+                    if legacy is not None:
+                        metrics = [legacy]
                 except Exception as error:
                     detail = str(error)
                     if current_error:
                         detail = f"{current_error}; fallback: {detail}"
                     raise RuntimeError(f"Cursor usage API failed: {detail}") from error
-            if metric is None:
+            if not metrics:
                 raise RuntimeError("Cursor usage API failed: no supported quota data")
             return AccountSnapshot(
                 account_id=account.id,
                 provider_id=self.id,
                 display_name=account.label or "Cursor",
                 logged_in=True,
-                plan=None,
-                metrics=[metric],
+                plan=plan_name,
+                metrics=metrics,
             )
         except Exception as error:
             had_creds = False

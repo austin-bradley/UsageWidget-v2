@@ -72,5 +72,8 @@ def format_slot(
             if compact:
                 return f"{metric.used:.0f}/{metric.limit:.0f}"
             return f"{metric.used:g}/{metric.limit:g}"
+        if metric.used is not None and metric.unit == "usd":
+            # Bonus / total spend without a hard cap.
+            return f"${metric.used:.0f}" if compact else f"${metric.used:g}"
         return "?" if pct is None else f"{pct}%"
     return "?" if pct is None else str(pct)

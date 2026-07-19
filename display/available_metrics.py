@@ -19,7 +19,15 @@ _PROVIDER_FALLBACKS: dict[str, tuple[tuple[str, str], ...]] = {
         ("fable_week", "Week (Fable)"),
         ("api", "API"),
     ),
-    "cursor": (("included", "Included"),),
+    "cursor": (
+        ("included", "Monthly included"),
+        ("bonus", "Bonus pool"),
+        ("auto", "Auto pool"),
+        ("api", "API pool"),
+        ("total", "Total spend"),
+        ("on_demand", "On-demand cap"),
+        ("pooled", "Team pool"),
+    ),
     "gpt": (
         ("session", "Session"),
         ("week", "Week"),
