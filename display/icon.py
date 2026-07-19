@@ -48,6 +48,9 @@ def _color_for_metric(
 ) -> RGBA:
     if color_by == "none":
         return _TEXT
+    # Unused bonus credits available → healthy (matches remaining_pct "100").
+    if metric.used is None and bool(metric.extra.get("remaining_bonus")):
+        return _color_for_pct(0, thresholds)
     pct = metric.used_pct
     if pct is None:
         return _MUTED

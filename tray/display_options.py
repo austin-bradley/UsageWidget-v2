@@ -71,6 +71,12 @@ def _open(
     preset_row.pack(fill=tk.X, padx=12, pady=4)
     tk.Label(preset_row, text="Preset:").pack(side=tk.LEFT)
     available_refs = {ref for ref, _ in refs}
+    # Presets that bind live meters must not trust catalog fallbacks alone.
+    live_refs = {
+        f"{account.account_id}.{metric.id}"
+        for account in snapshot.accounts
+        for metric in account.metrics
+    }
     preset_values = [
         "(choose)",
         "Session %",
@@ -79,8 +85,8 @@ def _open(
         "Reset countdown only",
     ]
     if (
-        "claude-personal.session" in available_refs
-        and "cursor-main.included" in available_refs
+        "claude-personal.session" in live_refs
+        and "cursor-main.overall" in live_refs
     ):
         preset_values.append("Claude + Cursor split")
 
@@ -359,7 +365,13 @@ def _open(
         name = preset_var.get()
         personal = "claude-personal.session"
         week = "claude-personal.week"
-        cursor = "cursor-main.included"
+        # Icon % uses Cursor's usage gauge only — never Monthly $ as a %.
+        cursor_pct = (
+            "cursor-main.overall" if "cursor-main.overall" in live_refs else ""
+        )
+        cursor_dollars = (
+            "cursor-main.included" if "cursor-main.included" in live_refs else ""
+        )
         if name == "Session %":
             layout_var.set("single")
             icon_slots[0]["ref"].set(label_by_ref.get(personal, personal))
@@ -392,10 +404,10 @@ def _open(
             tip_slots.clear()
             tip_slots.append(DisplaySlot(ref=personal, show="reset", label="Reset"))
         elif name == "Claude + Cursor split":
-            if personal not in available_refs or cursor not in available_refs:
+            if personal not in available_refs or not cursor_pct:
                 messagebox.showinfo(
                     "Display options",
-                    "Enable Claude Personal and Cursor accounts first.",
+                    "Enable Claude Personal and Cursor (with Overall usage) first.",
                     parent=win,
                 )
                 preset_var.set("(choose)")
@@ -404,16 +416,22 @@ def _open(
             icon_slots[0]["ref"].set(label_by_ref.get(personal, personal))
             icon_slots[0]["show"].set("percent")
             icon_slots[0]["label"].set("P")
-            icon_slots[1]["ref"].set(label_by_ref.get(cursor, cursor))
+            icon_slots[1]["ref"].set(label_by_ref.get(cursor_pct, cursor_pct))
             icon_slots[1]["show"].set("percent")
             icon_slots[1]["label"].set("C")
             tip_slots.clear()
-            tip_slots.extend(
-                [
-                    DisplaySlot(ref=personal, show="percent_and_reset", label="Session"),
-                    DisplaySlot(ref=cursor, show="used_of_limit", label="Cursor"),
-                ]
+            tip_slots.append(
+                DisplaySlot(ref=personal, show="percent_and_reset", label="Session")
             )
+            tip_slots.append(
+                DisplaySlot(ref=cursor_pct, show="percent", label="Cursor")
+            )
+            if cursor_dollars:
+                tip_slots.append(
+                    DisplaySlot(
+                        ref=cursor_dollars, show="used_of_limit", label="Cursor $"
+                    )
+                )
         else:
             return
         sync_layout_ui()

@@ -143,9 +143,16 @@ def _request_json(url: str, token: str, *, post: bool = False) -> dict[str, Any]
 
 
 def _number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool):
         return None
-    return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -179,9 +186,19 @@ def _usd_metric(
     used_pct: float | None = None,
     extra: dict[str, Any] | None = None,
 ) -> Metric | None:
-    # Need a usable amount or a real used/limit pair — limit-only is not enough.
+    # Limit-only is allowed (cap visible, used unknown) — never invent $0 used.
     if used_cents is None and used_pct is None:
-        return None
+        if limit_cents is None or limit_cents <= 0:
+            return None
+        return Metric(
+            id=metric_id,
+            label=label,
+            used=None,
+            limit=limit_cents / 100,
+            unit="usd",
+            resets_at=resets_at,
+            extra=extra or {},
+        )
     if used_pct is None and used_cents is not None and limit_cents:
         used_pct = used_cents / limit_cents * 100
     return Metric(
@@ -229,9 +246,11 @@ def _current_metrics(data: dict[str, Any]) -> list[Metric]:
         if included_cents is None and remaining_cents is not None and limit_cents is not None:
             included_cents = max(0.0, limit_cents - remaining_cents)
 
+        # Plan dollar allowance (includedSpend / limit). Distinct from
+        # totalPercentUsed ("Overall usage") and Auto/API pool percents.
         monthly = _usd_metric(
             "included",
-            "Monthly included",
+            "Monthly $",
             used_cents=included_cents,
             limit_cents=limit_cents,
             resets_at=resets_at,
@@ -241,32 +260,52 @@ def _current_metrics(data: dict[str, Any]) -> list[Metric]:
 
         bonus_cents = _number(usage.get("bonusSpend")) or 0.0
         remaining_bonus = bool(usage.get("remainingBonus"))
-        # Surface bonus when spend accrued or credits remain available.
+        # bonusSpend is accrued free-credit spend, not a remaining balance.
         if bonus_cents > 0 or remaining_bonus:
             metrics.append(
                 Metric(
                     id="bonus",
-                    label="Bonus pool",
-                    used=bonus_cents / 100,
+                    label="Bonus spend" if bonus_cents > 0 else "Bonus available",
+                    used=bonus_cents / 100 if bonus_cents > 0 else None,
                     unit="usd",
                     resets_at=resets_at,
                     extra={"remaining_bonus": remaining_bonus},
                 )
             )
 
+        # Keep 0% pools visible so configured slots do not silently drop.
         auto = _pct_metric(
-            "auto", "Auto pool", _number(usage.get("autoPercentUsed")), resets_at
+            "auto",
+            "Auto pool",
+            _number(usage.get("autoPercentUsed")),
+            resets_at,
+            include_zero=True,
         )
         if auto is not None:
             metrics.append(auto)
         api = _pct_metric(
-            "api", "API pool", _number(usage.get("apiPercentUsed")), resets_at
+            "api",
+            "API pool",
+            _number(usage.get("apiPercentUsed")),
+            resets_at,
+            include_zero=True,
         )
         if api is not None:
             metrics.append(api)
 
+        # Cursor's own "included total usage" gauge (not dollars/plan limit).
+        overall = _pct_metric(
+            "overall",
+            "Overall usage",
+            _number(usage.get("totalPercentUsed")),
+            resets_at,
+            include_zero=True,
+        )
+        if overall is not None:
+            metrics.append(overall)
+
         total_spend = _number(usage.get("totalSpend"))
-        # Dollar amount only — API totalPercentUsed is not totalSpend/planLimit.
+        # Dollar amount only — do not attach totalPercentUsed (different basis).
         if total_spend is not None:
             metrics.append(
                 Metric(
@@ -285,12 +324,14 @@ def _current_metrics(data: dict[str, Any]) -> list[Metric]:
         pooled_remaining = _number(spend.get("pooledRemaining"))
         if pooled_used is None and pooled_limit is not None and pooled_remaining is not None:
             pooled_used = max(0.0, pooled_limit - pooled_remaining)
-        # Only show team pool when Cursor actually returns pooled fields.
-        if pooled_limit is not None or pooled_used is not None:
+        # Used alone, or a positive cap (usage may be unknown).
+        if pooled_used is not None or (
+            pooled_limit is not None and pooled_limit > 0
+        ):
             pooled = _usd_metric(
                 "pooled",
                 "Team pool",
-                used_cents=pooled_used if pooled_used is not None else 0.0,
+                used_cents=pooled_used,
                 limit_cents=pooled_limit,
                 resets_at=resets_at,
                 extra={"limit_type": spend.get("limitType")},
@@ -303,12 +344,12 @@ def _current_metrics(data: dict[str, Any]) -> list[Metric]:
         ind_remaining = _number(spend.get("individualRemaining"))
         if ind_used is None and ind_limit is not None and ind_remaining is not None:
             ind_used = max(0.0, ind_limit - ind_remaining)
-        # Show on-demand when a cap exists (even $0 used).
+        # Cap alone is fine (used unknown); do not invent $0 spend.
         if ind_limit is not None and ind_limit > 0:
             on_demand = _usd_metric(
                 "on_demand",
                 "On-demand cap",
-                used_cents=ind_used if ind_used is not None else 0.0,
+                used_cents=ind_used,
                 limit_cents=ind_limit,
                 resets_at=resets_at,
                 extra={"limit_type": spend.get("limitType")},
@@ -317,6 +358,21 @@ def _current_metrics(data: dict[str, Any]) -> list[Metric]:
                 metrics.append(on_demand)
 
     return metrics
+
+
+def _merge_legacy_if_needed(
+    metrics: list[Metric], legacy: list[Metric]
+) -> list[Metric]:
+    """Fill missing primary meters from legacy without overwriting current ids."""
+    have_ids = {metric.id for metric in metrics}
+    if "included" in have_ids and "overall" in have_ids:
+        return metrics
+    merged = list(metrics)
+    for metric in legacy:
+        if metric.id not in have_ids:
+            merged.append(metric)
+            have_ids.add(metric.id)
+    return merged
 
 
 def _next_month(value: Any) -> datetime | None:
@@ -329,13 +385,13 @@ def _next_month(value: Any) -> datetime | None:
     return start.replace(year=year, month=month, day=day)
 
 
-def _legacy_metric(data: dict[str, Any]) -> Metric | None:
+def _legacy_metrics(data: dict[str, Any]) -> list[Metric]:
     candidates: list[tuple[str, dict[str, Any]]] = []
     for key, value in data.items():
         if isinstance(value, dict) and _number(value.get("maxRequestUsage")):
             candidates.append((key, value))
     if not candidates:
-        return None
+        return []
     model, usage = next(
         (item for item in candidates if item[0] == "gpt-4"),
         candidates[0],
@@ -343,17 +399,41 @@ def _legacy_metric(data: dict[str, Any]) -> Metric | None:
     used = _number(usage.get("numRequests"))
     limit = _number(usage.get("maxRequestUsage"))
     if used is None or not limit:
-        return None
-    return Metric(
-        id="included",
-        label="Monthly included",
-        used_pct=round(used / limit * 100),
-        used=used,
-        limit=limit,
-        unit="requests",
-        resets_at=_next_month(data.get("startOfMonth")),
-        extra={"model": model},
-    )
+        return []
+    resets_at = _next_month(data.get("startOfMonth"))
+    used_pct = round(used / limit * 100)
+    # Explicit requests id, compat included, and overall so migrated
+    # percent slots (*.overall) still resolve on the legacy API.
+    return [
+        Metric(
+            id="included_requests",
+            label="Monthly requests",
+            used_pct=used_pct,
+            used=used,
+            limit=limit,
+            unit="requests",
+            resets_at=resets_at,
+            extra={"model": model},
+        ),
+        Metric(
+            id="included",
+            label="Monthly requests",
+            used_pct=used_pct,
+            used=used,
+            limit=limit,
+            unit="requests",
+            resets_at=resets_at,
+            extra={"model": model, "legacy_alias": True},
+        ),
+        Metric(
+            id="overall",
+            label="Overall usage",
+            used_pct=used_pct,
+            unit="percent",
+            resets_at=resets_at,
+            extra={"model": model, "legacy_proxy": True},
+        ),
+    ]
 
 
 class CursorProvider:
@@ -395,16 +475,22 @@ class CursorProvider:
             except Exception as error:
                 current_error = str(error)
                 metrics = []
-            if not metrics:
+            # Hole-fill included/overall from legacy when either is missing.
+            metric_ids = {metric.id for metric in metrics}
+            if "included" not in metric_ids or "overall" not in metric_ids:
                 try:
-                    legacy = _legacy_metric(_request_json(LEGACY_USAGE_URL, token))
-                    if legacy is not None:
-                        metrics = [legacy]
+                    metrics = _merge_legacy_if_needed(
+                        metrics,
+                        _legacy_metrics(_request_json(LEGACY_USAGE_URL, token)),
+                    )
                 except Exception as error:
-                    detail = str(error)
-                    if current_error:
-                        detail = f"{current_error}; fallback: {detail}"
-                    raise RuntimeError(f"Cursor usage API failed: {detail}") from error
+                    if not metrics:
+                        detail = str(error)
+                        if current_error:
+                            detail = f"{current_error}; fallback: {detail}"
+                        raise RuntimeError(
+                            f"Cursor usage API failed: {detail}"
+                        ) from error
             if not metrics:
                 raise RuntimeError("Cursor usage API failed: no supported quota data")
             return AccountSnapshot(

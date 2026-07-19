@@ -54,13 +54,24 @@ def format_slot(
     pct = metric.used_pct
     countdown = _fmt_countdown(metric.resets_at, compact=compact)
 
+    bonus_open = (
+        metric.used is None
+        and bool(metric.extra.get("remaining_bonus"))
+    )
     if show == "percent":
+        if pct is None and bonus_open:
+            return "ok"
         return "?" if pct is None else str(pct)
     elif show == "remaining_pct":
+        # Unused bonus credits ⇒ full remaining headroom (numeric, not "ok").
+        if pct is None and bonus_open:
+            return "100"
         return "?" if pct is None else str(max(0, 100 - pct))
     elif show == "reset":
         return countdown
     elif show == "percent_and_reset":
+        if pct is None and bonus_open:
+            return f"ok·{countdown}"
         percent = "?" if pct is None else str(pct)
         return f"{percent}·{countdown}"
     elif show == "used_of_limit":
@@ -72,8 +83,19 @@ def format_slot(
             if compact:
                 return f"{metric.used:.0f}/{metric.limit:.0f}"
             return f"{metric.used:g}/{metric.limit:g}"
+        if metric.used is None and metric.limit is not None:
+            # Cap known, usage unknown — do not invent $0.
+            if metric.unit == "usd":
+                limit = f"${metric.limit:.0f}" if compact else f"${metric.limit:g}"
+            else:
+                limit = f"{metric.limit:.0f}" if compact else f"{metric.limit:g}"
+            return f"—/{limit}"
         if metric.used is not None and metric.unit == "usd":
             # Bonus / total spend without a hard cap.
             return f"${metric.used:.0f}" if compact else f"${metric.used:g}"
+        if bonus_open:
+            return "avail"
         return "?" if pct is None else f"{pct}%"
+    if pct is None and bonus_open:
+        return "ok"
     return "?" if pct is None else str(pct)

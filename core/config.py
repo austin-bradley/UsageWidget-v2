@@ -141,6 +141,42 @@ def _parse_config(data: dict[str, Any]) -> AppConfig:
     )
 
 
+_CURSOR_PERCENT_SHOWS = frozenset({"percent", "remaining_pct", "percent_and_reset"})
+
+
+def _migrate_cursor_percent_slots(cfg: AppConfig) -> None:
+    """Remap Cursor Monthly $ percent slots to Overall usage.
+
+    Older configs used ``*.included`` + percent for the glance meter; that is
+    now plan-dollar fill. Percent/remaining modes move to ``*.overall``.
+    ``used_of_limit`` stays on ``included`` (dollar rows).
+    """
+    cursor_ids = {account.id for account in cfg.accounts if account.provider == "cursor"}
+    if not cursor_ids:
+        return
+
+    def migrate_slot(slot: DisplaySlot) -> DisplaySlot:
+        try:
+            account_id, metric_id = slot.ref.rsplit(".", 1)
+        except ValueError:
+            return slot
+        if (
+            account_id not in cursor_ids
+            or metric_id != "included"
+            or slot.show not in _CURSOR_PERCENT_SHOWS
+        ):
+            return slot
+        return DisplaySlot(
+            ref=f"{account_id}.overall",
+            show=slot.show,
+            label=slot.label,
+        )
+
+    for profile in cfg.profiles.values():
+        profile.icon.slots = [migrate_slot(slot) for slot in profile.icon.slots]
+        profile.tooltip.slots = [migrate_slot(slot) for slot in profile.tooltip.slots]
+
+
 def load_config(path: Path | None = None) -> AppConfig:
     path = path or config_path()
     try:
@@ -174,6 +210,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             raise RuntimeError(
                 f"Config {path}: account {account.id} poll_seconds must be >= 1"
             )
+    _migrate_cursor_percent_slots(cfg)
     return cfg
 
 

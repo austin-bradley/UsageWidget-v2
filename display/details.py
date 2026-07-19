@@ -24,12 +24,16 @@ def _format_metric(metric: Metric, always_include_resets: bool) -> str:
         text = f"{mark} {metric.label}: ${metric.used:g} / ${metric.limit:g}"
         if metric.used_pct is not None:
             text += f" ({metric.used_pct}%)"
+    elif metric.used is None and metric.limit is not None and metric.unit == "usd":
+        text = f"{mark} {metric.label}: cap ${metric.limit:g}"
     elif metric.used is not None and metric.unit == "usd":
         text = f"{mark} {metric.label}: ${metric.used:g}"
         if metric.used_pct is not None:
             text += f" ({metric.used_pct}%)"
     elif metric.used_pct is not None:
         text = f"{mark} {metric.label}: {percent} used"
+    elif metric.extra.get("remaining_bonus"):
+        text = f"{mark} {metric.label}"
     else:
         text = f"{mark} {metric.label}: ?"
     if always_include_resets and metric.resets_at is not None:
