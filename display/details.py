@@ -20,14 +20,18 @@ def _status_mark(pct: int | None) -> str:
 def _format_metric(metric: Metric, always_include_resets: bool) -> str:
     percent = "?" if metric.used_pct is None else f"{metric.used_pct}%"
     mark = _status_mark(metric.used_pct)
-    text = f"{mark} {metric.label}: {percent} used"
     if metric.used is not None and metric.limit is not None and metric.unit == "usd":
-        text = (
-            f"{mark} {metric.label}: "
-            f"${metric.used:g} / ${metric.limit:g}"
-        )
+        text = f"{mark} {metric.label}: ${metric.used:g} / ${metric.limit:g}"
         if metric.used_pct is not None:
             text += f" ({metric.used_pct}%)"
+    elif metric.used is not None and metric.unit == "usd":
+        text = f"{mark} {metric.label}: ${metric.used:g}"
+        if metric.used_pct is not None:
+            text += f" ({metric.used_pct}%)"
+    elif metric.used_pct is not None:
+        text = f"{mark} {metric.label}: {percent} used"
+    else:
+        text = f"{mark} {metric.label}: ?"
     if always_include_resets and metric.resets_at is not None:
         text += f"  ·  resets {format_slot('reset', metric)}"
     return text
