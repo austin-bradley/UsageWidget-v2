@@ -179,7 +179,8 @@ def _usd_metric(
     used_pct: float | None = None,
     extra: dict[str, Any] | None = None,
 ) -> Metric | None:
-    if used_cents is None and used_pct is None and limit_cents is None:
+    # Need a usable amount or a real used/limit pair — limit-only is not enough.
+    if used_cents is None and used_pct is None:
         return None
     if used_pct is None and used_cents is not None and limit_cents:
         used_pct = used_cents / limit_cents * 100
@@ -200,8 +201,12 @@ def _pct_metric(
     label: str,
     pct: float | None,
     resets_at: datetime | None,
+    *,
+    include_zero: bool = False,
 ) -> Metric | None:
     if pct is None:
+        return None
+    if not include_zero and pct <= 0:
         return None
     return Metric(
         id=metric_id,
@@ -234,8 +239,10 @@ def _current_metrics(data: dict[str, Any]) -> list[Metric]:
         if monthly is not None:
             metrics.append(monthly)
 
-        bonus_cents = _number(usage.get("bonusSpend"))
-        if bonus_cents is not None and bonus_cents > 0:
+        bonus_cents = _number(usage.get("bonusSpend")) or 0.0
+        remaining_bonus = bool(usage.get("remainingBonus"))
+        # Surface bonus when spend accrued or credits remain available.
+        if bonus_cents > 0 or remaining_bonus:
             metrics.append(
                 Metric(
                     id="bonus",
@@ -243,28 +250,30 @@ def _current_metrics(data: dict[str, Any]) -> list[Metric]:
                     used=bonus_cents / 100,
                     unit="usd",
                     resets_at=resets_at,
-                    extra={"remaining_bonus": bool(usage.get("remainingBonus"))},
+                    extra={"remaining_bonus": remaining_bonus},
                 )
             )
 
-        auto = _pct_metric("auto", "Auto pool", _number(usage.get("autoPercentUsed")), resets_at)
+        auto = _pct_metric(
+            "auto", "Auto pool", _number(usage.get("autoPercentUsed")), resets_at
+        )
         if auto is not None:
             metrics.append(auto)
-        api = _pct_metric("api", "API pool", _number(usage.get("apiPercentUsed")), resets_at)
+        api = _pct_metric(
+            "api", "API pool", _number(usage.get("apiPercentUsed")), resets_at
+        )
         if api is not None:
             metrics.append(api)
 
         total_spend = _number(usage.get("totalSpend"))
-        total_pct = _number(usage.get("totalPercentUsed"))
-        # Combined spend (included + bonus) — useful context, not the plan cap.
-        if total_spend is not None or total_pct is not None:
+        # Dollar amount only — API totalPercentUsed is not totalSpend/planLimit.
+        if total_spend is not None:
             metrics.append(
                 Metric(
                     id="total",
                     label="Total spend",
-                    used_pct=round(total_pct) if total_pct is not None else None,
-                    used=total_spend / 100 if total_spend is not None else None,
-                    unit="usd" if total_spend is not None else "percent",
+                    used=total_spend / 100,
+                    unit="usd",
                     resets_at=resets_at,
                 )
             )
@@ -276,32 +285,36 @@ def _current_metrics(data: dict[str, Any]) -> list[Metric]:
         pooled_remaining = _number(spend.get("pooledRemaining"))
         if pooled_used is None and pooled_limit is not None and pooled_remaining is not None:
             pooled_used = max(0.0, pooled_limit - pooled_remaining)
-        pooled = _usd_metric(
-            "pooled",
-            "Team pool",
-            used_cents=pooled_used,
-            limit_cents=pooled_limit,
-            resets_at=resets_at,
-            extra={"limit_type": spend.get("limitType")},
-        )
-        if pooled is not None:
-            metrics.append(pooled)
+        # Only show team pool when Cursor actually returns pooled fields.
+        if pooled_limit is not None or pooled_used is not None:
+            pooled = _usd_metric(
+                "pooled",
+                "Team pool",
+                used_cents=pooled_used if pooled_used is not None else 0.0,
+                limit_cents=pooled_limit,
+                resets_at=resets_at,
+                extra={"limit_type": spend.get("limitType")},
+            )
+            if pooled is not None:
+                metrics.append(pooled)
 
         ind_limit = _number(spend.get("individualLimit"))
         ind_used = _number(spend.get("individualUsed"))
         ind_remaining = _number(spend.get("individualRemaining"))
         if ind_used is None and ind_limit is not None and ind_remaining is not None:
             ind_used = max(0.0, ind_limit - ind_remaining)
-        on_demand = _usd_metric(
-            "on_demand",
-            "On-demand cap",
-            used_cents=ind_used if ind_used is not None else 0.0 if ind_limit is not None else None,
-            limit_cents=ind_limit,
-            resets_at=resets_at,
-            extra={"limit_type": spend.get("limitType")},
-        )
-        if on_demand is not None:
-            metrics.append(on_demand)
+        # Show on-demand when a cap exists (even $0 used).
+        if ind_limit is not None and ind_limit > 0:
+            on_demand = _usd_metric(
+                "on_demand",
+                "On-demand cap",
+                used_cents=ind_used if ind_used is not None else 0.0,
+                limit_cents=ind_limit,
+                resets_at=resets_at,
+                extra={"limit_type": spend.get("limitType")},
+            )
+            if on_demand is not None:
+                metrics.append(on_demand)
 
     return metrics
 
@@ -333,7 +346,7 @@ def _legacy_metric(data: dict[str, Any]) -> Metric | None:
         return None
     return Metric(
         id="included",
-        label="Included",
+        label="Monthly included",
         used_pct=round(used / limit * 100),
         used=used,
         limit=limit,
