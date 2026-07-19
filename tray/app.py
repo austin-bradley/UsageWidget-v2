@@ -1,11 +1,13 @@
 """System tray shell for Usage Widget v2."""
 from __future__ import annotations
 
+import copy
 import ctypes
 import os
 import shutil
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 import pystray
@@ -26,7 +28,7 @@ from display.details import build_details
 from display.icon import render_icon
 from display.profiles import get_active_profile
 from display.tooltip import build_tooltip
-from tray.details_window import show_details
+from tray.details_window import show_details, update_details_text
 from tray.display_options import open_display_options
 from tray.win_notify import get_always_visible, set_always_visible
 
@@ -89,6 +91,7 @@ class UsageTray:
         self._state_lock = threading.Lock()
         self._refreshing = False
         self._refresh_pending = False
+        self._refresh_done_callbacks: list[Callable[[], None]] = []
         self._last_fetch_error: str | None = None
 
         menu = pystray.Menu(
@@ -136,7 +139,7 @@ class UsageTray:
 
     def _get_display_state(self) -> tuple[AppConfig, AppSnapshot]:
         with self._state_lock:
-            return self.config, self.snapshot
+            return copy.deepcopy(self.config), copy.deepcopy(self.snapshot)
 
     def _on_display_options(self, icon, item):
         open_display_options(
@@ -146,8 +149,9 @@ class UsageTray:
 
     def _on_display_options_save(self, cfg: AppConfig) -> None:
         patch_config_profile_display(cfg)
-        self.config = load_config()
+        loaded = load_config()
         with self._state_lock:
+            self.config = loaded
             self._rotate_index = 0
             self.snapshot = filter_enabled(self.snapshot, self.config)
         log_event("display options saved")
@@ -251,15 +255,18 @@ class UsageTray:
             text = f"Last refresh failed: {fetch_error}\n\n{text}"
         return text
 
-    def _details_refresh(self) -> str:
-        self._refresh_once()
-        return self._details_body()
+    def _details_refresh(self) -> None:
+        """Kick a coalesced poll; update the details window when it finishes."""
+
+        def done() -> None:
+            update_details_text(self._details_body())
+
+        self.refresh_async(on_done=done)
 
     def _on_details(self, icon, item):
         show_details(
             self.config.app_name,
             self._details_body(),
-            get_body=self._details_body,
             on_refresh=self._details_refresh,
             on_copy=_set_clipboard_text,
             on_display_options=lambda: self._on_display_options(None, None),
@@ -346,9 +353,11 @@ class UsageTray:
         self._stop = True
         icon.stop()
 
-    def refresh_async(self) -> None:
+    def refresh_async(self, on_done: Callable[[], None] | None = None) -> None:
         """Start at most one fetch; coalesce overlapping refresh requests."""
         with self._state_lock:
+            if on_done is not None:
+                self._refresh_done_callbacks.append(on_done)
             if self._refreshing:
                 self._refresh_pending = True
                 return
@@ -357,9 +366,11 @@ class UsageTray:
 
     def _refresh_worker(self) -> None:
         while True:
+            with self._state_lock:
+                config = self.config
             try:
-                fresh = fetch_all(self.config)
-                fresh = filter_enabled(fresh, self.config)
+                fresh = fetch_all(config)
+                fresh = filter_enabled(fresh, config)
                 with self._state_lock:
                     baseline = self._merge_baseline or self.snapshot
                     self.snapshot = merge_last_good(baseline, fresh)
@@ -381,33 +392,25 @@ class UsageTray:
                 log_event(f"refresh failed: {e}")
             self._render()
             with self._state_lock:
-                if not self._refresh_pending or self._stop:
-                    self._refreshing = False
+                if self._refresh_pending and not self._stop:
                     self._refresh_pending = False
-                    return
+                    continue
+                self._refreshing = False
                 self._refresh_pending = False
+                callbacks = list(self._refresh_done_callbacks)
+                self._refresh_done_callbacks.clear()
+            for callback in callbacks:
+                try:
+                    callback()
+                except Exception as error:
+                    log_event(f"refresh done callback failed: {error}")
+            return
 
     def _refresh_once(self) -> None:
-        """Compatibility helper for smokes/tests — runs a single fetch inline."""
-        try:
-            fresh = fetch_all(self.config)
-            fresh = filter_enabled(fresh, self.config)
-            with self._state_lock:
-                baseline = self._merge_baseline or self.snapshot
-                self.snapshot = merge_last_good(baseline, fresh)
-                self._merge_baseline = None
-                self._last_fetch_error = None
-                to_save = self.snapshot
-            try:
-                save_snapshot(to_save)
-            except Exception:
-                pass
-        except Exception as e:
-            with self._state_lock:
-                self._merge_baseline = None
-                self._last_fetch_error = str(e)
-            log_event(f"refresh failed: {e}")
-        self._render()
+        """Compatibility helper for smokes/tests — waits for one coalesced fetch."""
+        done = threading.Event()
+        self.refresh_async(on_done=done.set)
+        done.wait(timeout=90)
 
     def _render(self) -> None:
         profile = get_active_profile(self.config)

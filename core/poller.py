@@ -3,6 +3,7 @@ from datetime import datetime
 
 from core.auth_errors import is_auth_error
 from core.models import AppConfig, AppSnapshot, AccountSnapshot
+from providers.base import error_snapshot
 from providers.registry import get_provider
 
 
@@ -75,14 +76,12 @@ def fetch_all(config: AppConfig) -> AppSnapshot:
         try:
             return get_provider(acct.provider).fetch(acct)
         except Exception as e:
-            return AccountSnapshot(
-                account_id=acct.id,
-                provider_id=acct.provider,
-                display_name=acct.label or acct.id,
-                logged_in=False,
-                plan=None,
-                metrics=[],
-                error=str(e),
+            # Unknown transport/provider crashes: keep last-good unless auth-like.
+            return error_snapshot(
+                acct,
+                acct.provider,
+                e,
+                had_credentials=True,
             )
 
     if not enabled:

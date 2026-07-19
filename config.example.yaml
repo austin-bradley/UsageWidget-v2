@@ -50,7 +50,7 @@ profiles:
     icon:
       mode: single
       layout: primary_only
-      max_slots: 3
+      max_slots: 1
       rotate_seconds: 8
       color_by: percent
       thresholds:

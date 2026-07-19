@@ -70,19 +70,27 @@ def _open(
     preset_row = tk.Frame(win)
     preset_row.pack(fill=tk.X, padx=12, pady=4)
     tk.Label(preset_row, text="Preset:").pack(side=tk.LEFT)
+    available_refs = {ref for ref, _ in refs}
+    preset_values = [
+        "(choose)",
+        "Session %",
+        "Session % + reset",
+        "Week %",
+        "Reset countdown only",
+    ]
+    if (
+        "claude-personal.session" in available_refs
+        and "cursor-main.included" in available_refs
+    ):
+        preset_values.append("Claude + Cursor split")
+
     preset_var = tk.StringVar(value="(choose)")
     preset_box = ttk.Combobox(
         preset_row,
         textvariable=preset_var,
         state="readonly",
         width=36,
-        values=[
-            "(choose)",
-            "Session %",
-            "Session % + reset",
-            "Week %",
-            "Claude + Cursor split",
-        ],
+        values=preset_values,
     )
     preset_box.pack(side=tk.LEFT, padx=8)
 
@@ -95,18 +103,22 @@ def _open(
     notebook.add(tip_tab, text="Tooltip")
 
     # --- Icon tab ---
-    layout_var = tk.StringVar(
-        value="single"
-        if draft.icon.mode in ("single", "rotate")
-        or draft.icon.layout == "primary_only"
-        else "split"
-    )
+    if draft.icon.mode == "rotate":
+        initial_layout = "rotate"
+    elif draft.icon.mode == "single" or draft.icon.layout == "primary_only":
+        initial_layout = "single"
+    else:
+        initial_layout = "split"
+    layout_var = tk.StringVar(value=initial_layout)
     tk.Label(icon_tab, text="Layout").grid(row=0, column=0, sticky="w", padx=8, pady=6)
     tk.Radiobutton(icon_tab, text="Single (large)", variable=layout_var, value="single").grid(
         row=0, column=1, sticky="w"
     )
     tk.Radiobutton(icon_tab, text="Split (2 values)", variable=layout_var, value="split").grid(
         row=0, column=2, sticky="w"
+    )
+    tk.Radiobutton(icon_tab, text="Rotate", variable=layout_var, value="rotate").grid(
+        row=0, column=3, sticky="w"
     )
 
     color_by_var = tk.StringVar(value=draft.icon.color_by or "percent")
@@ -120,7 +132,7 @@ def _open(
     ).grid(row=3, column=1, sticky="w", padx=4, pady=4)
 
     preview_label = tk.Label(icon_tab)
-    preview_label.grid(row=0, column=3, rowspan=4, padx=12, pady=6)
+    preview_label.grid(row=0, column=4, rowspan=4, padx=12, pady=6)
     _preview_photo: list[ImageTk.PhotoImage | None] = [None]
 
     icon_slots: list[dict[str, object]] = []
@@ -290,7 +302,8 @@ def _open(
 
     def collect_icon_slots() -> list[DisplaySlot]:
         slots: list[DisplaySlot] = []
-        limit = 1 if layout_var.get() == "single" else 2
+        layout = layout_var.get()
+        limit = 1 if layout == "single" else 2
         for i in range(limit):
             row = icon_slots[i]
             ref = resolve_ref(str(row["ref"].get()))  # type: ignore[arg-type]
@@ -306,6 +319,21 @@ def _open(
             )
         return slots
 
+    def apply_layout_to_icon(icon) -> None:
+        layout = layout_var.get()
+        if layout == "single":
+            icon.mode = "single"
+            icon.layout = "primary_only"
+            icon.max_slots = 1
+        elif layout == "rotate":
+            icon.mode = "rotate"
+            icon.layout = "primary_only"
+            icon.max_slots = max(1, len(collect_icon_slots()) or 1)
+        else:
+            icon.mode = "composite"
+            icon.layout = "split"
+            icon.max_slots = 2
+
     def sync_layout_ui(*_args: object) -> None:
         if layout_var.get() == "single":
             icon_frames[1].grid_remove()
@@ -319,14 +347,7 @@ def _open(
             tooltip=copy.deepcopy(draft.tooltip),
             details=copy.deepcopy(draft.details),
         )
-        if layout_var.get() == "single":
-            probe.icon.mode = "single"
-            probe.icon.layout = "primary_only"
-            probe.icon.max_slots = 1
-        else:
-            probe.icon.mode = "composite"
-            probe.icon.layout = "split"
-            probe.icon.max_slots = 2
+        apply_layout_to_icon(probe.icon)
         probe.icon.slots = collect_icon_slots()
         probe.icon.color_by = color_by_var.get() or "percent"
         image = render_icon(probe, snapshot).resize((72, 72))
@@ -364,7 +385,21 @@ def _open(
             icon_slots[0]["show"].set("percent")
             tip_slots.clear()
             tip_slots.append(DisplaySlot(ref=week, show="percent", label="Week"))
+        elif name == "Reset countdown only":
+            layout_var.set("single")
+            icon_slots[0]["ref"].set(label_by_ref.get(personal, personal))
+            icon_slots[0]["show"].set("reset")
+            tip_slots.clear()
+            tip_slots.append(DisplaySlot(ref=personal, show="reset", label="Reset"))
         elif name == "Claude + Cursor split":
+            if personal not in available_refs or cursor not in available_refs:
+                messagebox.showinfo(
+                    "Display options",
+                    "Enable Claude Personal and Cursor accounts first.",
+                    parent=win,
+                )
+                preset_var.set("(choose)")
+                return
             layout_var.set("split")
             icon_slots[0]["ref"].set(label_by_ref.get(personal, personal))
             icon_slots[0]["show"].set("percent")
@@ -405,15 +440,10 @@ def _open(
         cfg, _ = get_state()
         cfg = copy.deepcopy(cfg)
         profile = get_active_profile(cfg)
-        if layout_var.get() == "single":
-            profile.icon.mode = "single"
-            profile.icon.layout = "primary_only"
-            profile.icon.max_slots = 1
-        else:
-            profile.icon.mode = "composite"
-            profile.icon.layout = "split"
-            profile.icon.max_slots = 2
+        apply_layout_to_icon(profile.icon)
         profile.icon.slots = slots
+        if layout_var.get() == "rotate":
+            profile.icon.max_slots = max(1, len(slots))
         profile.tooltip = TooltipDisplay(
             format=draft.tooltip.format,
             max_chars=draft.tooltip.max_chars,

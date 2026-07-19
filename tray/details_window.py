@@ -9,8 +9,7 @@ from tray import ui_thread
 
 _window: tk.Toplevel | None = None
 _text: scrolledtext.ScrolledText | None = None
-_get_body: Callable[[], str] | None = None
-_on_refresh: Callable[[], str] | None = None
+_on_refresh: Callable[[], None] | None = None
 _on_copy: Callable[[str], None] | None = None
 _on_display_options: Callable[[], None] | None = None
 
@@ -19,8 +18,7 @@ def show_details(
     app_name: str,
     body: str,
     *,
-    get_body: Callable[[], str] | None = None,
-    on_refresh: Callable[[], str] | None = None,
+    on_refresh: Callable[[], None] | None = None,
     on_copy: Callable[[str], None] | None = None,
     on_display_options: Callable[[], None] | None = None,
 ) -> None:
@@ -28,27 +26,29 @@ def show_details(
         _show,
         app_name,
         body,
-        get_body,
         on_refresh,
         on_copy,
         on_display_options,
     )
 
 
+def update_details_text(body: str) -> None:
+    """Replace details body from any thread (no-op if window closed)."""
+    ui_thread.call(_apply_text, body)
+
+
 def _show(
     app_name: str,
     body: str,
-    get_body: Callable[[], str] | None,
-    on_refresh: Callable[[], str] | None,
+    on_refresh: Callable[[], None] | None,
     on_copy: Callable[[str], None] | None,
     on_display_options: Callable[[], None] | None,
 ) -> None:
-    global _window, _text, _get_body, _on_refresh, _on_copy, _on_display_options
+    global _window, _text, _on_refresh, _on_copy, _on_display_options
     root = ui_thread.root()
     if root is None:
         return
 
-    _get_body = get_body
     _on_refresh = on_refresh
     _on_copy = on_copy
     _on_display_options = on_display_options
@@ -77,10 +77,9 @@ def _show(
     text.configure(state=tk.DISABLED)
 
     def close() -> None:
-        global _window, _text, _get_body, _on_refresh, _on_copy, _on_display_options
+        global _window, _text, _on_refresh, _on_copy, _on_display_options
         _window = None
         _text = None
-        _get_body = None
         _on_refresh = None
         _on_copy = None
         _on_display_options = None
@@ -89,8 +88,9 @@ def _show(
     def do_refresh() -> None:
         if _on_refresh is None:
             return
+        _apply_text("Refreshing…")
         try:
-            _apply_text(_on_refresh())
+            _on_refresh()
         except Exception as error:
             _apply_text(f"Refresh failed:\n{error}")
 
@@ -130,6 +130,11 @@ def _show(
 
 def _apply_text(body: str) -> None:
     if _text is None:
+        return
+    try:
+        if not _text.winfo_exists():
+            return
+    except tk.TclError:
         return
     _text.configure(state=tk.NORMAL)
     _text.delete("1.0", tk.END)
