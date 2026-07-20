@@ -172,9 +172,25 @@ def _migrate_cursor_percent_slots(cfg: AppConfig) -> None:
             label=slot.label,
         )
 
+    def dedupe_slots(slots: list[DisplaySlot]) -> list[DisplaySlot]:
+        # After migrate, included+percent and overall+percent can collide.
+        seen: set[tuple[str, str]] = set()
+        unique: list[DisplaySlot] = []
+        for slot in slots:
+            key = (slot.ref, slot.show)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(slot)
+        return unique
+
     for profile in cfg.profiles.values():
-        profile.icon.slots = [migrate_slot(slot) for slot in profile.icon.slots]
-        profile.tooltip.slots = [migrate_slot(slot) for slot in profile.tooltip.slots]
+        profile.icon.slots = dedupe_slots(
+            [migrate_slot(slot) for slot in profile.icon.slots]
+        )
+        profile.tooltip.slots = dedupe_slots(
+            [migrate_slot(slot) for slot in profile.tooltip.slots]
+        )
 
 
 def load_config(path: Path | None = None) -> AppConfig:

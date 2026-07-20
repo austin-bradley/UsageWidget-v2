@@ -2,9 +2,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from core.auth_errors import is_auth_error
-from core.models import AppConfig, AppSnapshot, AccountSnapshot
+from core.models import AppConfig, AppSnapshot, AccountSnapshot, Metric
 from providers.base import error_snapshot
 from providers.registry import get_provider
+
+
+def _merge_metrics(previous: list[Metric], current: list[Metric]) -> list[Metric]:
+    """Prefer current meters; keep prior ids omitted from a partial success."""
+    seen = {metric.id for metric in current}
+    merged = list(current)
+    for metric in previous:
+        if metric.id not in seen:
+            merged.append(metric)
+    return merged
 
 
 def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
@@ -13,6 +23,7 @@ def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
     - Auth/login errors or logged_in=False: do **not** keep stale meters.
     - Transient errors while still logged in: keep prior metrics/plan.
     - Empty successful parses while logged in: keep prior metrics.
+    - Partial success while logged in: keep prior meters for missing ids.
     """
     prev_by_id = {a.account_id: a for a in previous.accounts}
     merged: list[AccountSnapshot] = []
@@ -59,6 +70,26 @@ def merge_last_good(previous: AppSnapshot, new: AppSnapshot) -> AppSnapshot:
                     logged_in=acct.logged_in,
                     plan=acct.plan if acct.plan is not None else prev.plan,
                     metrics=list(prev.metrics),
+                    error=None,
+                )
+            )
+            continue
+
+        # Partial success: API dropped some fields/meters — retain prior ids.
+        if (
+            acct.logged_in
+            and acct.metrics
+            and prev is not None
+            and prev.metrics
+        ):
+            merged.append(
+                AccountSnapshot(
+                    account_id=acct.account_id,
+                    provider_id=acct.provider_id,
+                    display_name=acct.display_name or prev.display_name,
+                    logged_in=acct.logged_in,
+                    plan=acct.plan if acct.plan is not None else prev.plan,
+                    metrics=_merge_metrics(prev.metrics, acct.metrics),
                     error=None,
                 )
             )

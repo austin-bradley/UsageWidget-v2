@@ -182,6 +182,70 @@ class CursorMetricsTests(unittest.TestCase):
         self.assertEqual(tip.ref, "cursor-main.overall")
         self.assertEqual(tip.show, "percent_and_reset")
 
+    def test_migrate_dedupes_existing_overall(self) -> None:
+        cfg = AppConfig(
+            accounts=[AccountConfig(id="cursor-main", provider="cursor")],
+            profiles={
+                "default": DisplayProfile(
+                    icon=IconDisplay(
+                        slots=[
+                            DisplaySlot(ref="cursor-main.overall", show="percent"),
+                            DisplaySlot(ref="cursor-main.included", show="percent"),
+                        ]
+                    )
+                )
+            },
+        )
+        _migrate_cursor_percent_slots(cfg)
+        icon = cfg.profiles["default"].icon.slots
+        self.assertEqual(len(icon), 1)
+        self.assertEqual(icon[0].ref, "cursor-main.overall")
+
+
+class MergeLastGoodTests(unittest.TestCase):
+    def test_partial_success_keeps_missing_metric_ids(self) -> None:
+        from datetime import datetime
+
+        from core.poller import merge_last_good
+        from core.models import AccountSnapshot, AppSnapshot
+
+        prev = AppSnapshot(
+            fetched_at=datetime.now(),
+            accounts=[
+                AccountSnapshot(
+                    account_id="cursor-main",
+                    provider_id="cursor",
+                    display_name="Cursor",
+                    logged_in=True,
+                    plan="pro",
+                    metrics=[
+                        Metric(id="overall", label="Overall", used_pct=32),
+                        Metric(id="api", label="API pool", used_pct=90),
+                    ],
+                )
+            ],
+        )
+        new = AppSnapshot(
+            fetched_at=datetime.now(),
+            accounts=[
+                AccountSnapshot(
+                    account_id="cursor-main",
+                    provider_id="cursor",
+                    display_name="Cursor",
+                    logged_in=True,
+                    plan="pro",
+                    metrics=[
+                        Metric(id="overall", label="Overall", used_pct=40),
+                    ],
+                )
+            ],
+        )
+        out = merge_last_good(prev, new)
+        ids = [m.id for m in out.accounts[0].metrics]
+        self.assertEqual(ids, ["overall", "api"])
+        self.assertEqual(out.accounts[0].metrics[0].used_pct, 40)
+        self.assertEqual(out.accounts[0].metrics[1].used_pct, 90)
+
 
 if __name__ == "__main__":
     unittest.main()
