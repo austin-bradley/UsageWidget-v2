@@ -212,11 +212,17 @@ def _plan_family(plan: str | None) -> str | None:
     """Coarse plan identity for drift — Max / Max 5x / Max 20x are distinct."""
     if not plan:
         return None
-    lower = plan.casefold()
-    if "max" in lower and "20" in lower:
+    # Reuse boundary-safe tier parsing so raw labels like max_50 ≠ max5.
+    labeled = _plan_from_tiers(plan, plan)
+    if labeled == "Max (20x)":
         return "max20"
-    if "max" in lower and "5" in lower:
+    if labeled == "Max (5x)":
         return "max5"
+    if labeled == "Max":
+        return "max"
+    if labeled == "Pro":
+        return "pro"
+    lower = plan.casefold()
     if "max" in lower:
         return "max"
     if "pro" in lower:
@@ -346,7 +352,9 @@ def _read_account(auth: AuthConfig) -> dict[str, str | bool | None]:
         "plan": None,
         "logged_in": False,
     }
+    # Same scoring as read_plan_sources (most specific; prefer .claude.json).
     profile_plan: str | None = None
+    profile_score = -1
     for account_path in account_paths:
         try:
             with account_path.open(encoding="utf-8") as file:
@@ -357,8 +365,15 @@ def _read_account(auth: AuthConfig) -> dict[str, str | bool | None]:
                 info["name"] = account.get("displayName")
             if info["email"] is None and account.get("emailAddress"):
                 info["email"] = account.get("emailAddress")
-            if profile_plan is None:
-                profile_plan = _plan_from_oauth_account(account)
+            plan = _plan_from_oauth_account(account)
+            if not plan:
+                continue
+            score = _plan_specificity(plan) * 10
+            if account_path.name == ".claude.json":
+                score += 1
+            if score > profile_score:
+                profile_plan = plan
+                profile_score = score
         except Exception:
             continue
     try:

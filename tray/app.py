@@ -343,6 +343,8 @@ class UsageTray:
                 # Re-check after the prompt — user may have fixed login elsewhere.
                 drifted = claude_accounts_with_drift(self.config.accounts)
                 if not drifted:
+                    body, fix_auth = self._details_body()
+                    update_details_text(body, fix_auth_visible=fix_auth)
                     self._details_refresh()
                     return
 
