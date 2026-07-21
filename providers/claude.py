@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from core.models import AccountConfig, AccountSnapshot, AuthConfig, Metric
@@ -146,6 +147,197 @@ def _auth_paths(auth: AuthConfig) -> tuple[Path, Path, list[Path]]:
     return config_dir, credentials_path, account_paths
 
 
+def _normalize_tier_blob(*parts: str) -> str:
+    """Lowercase and collapse separators to ``_`` for boundary-safe matching."""
+    raw = "_".join(part for part in parts if part).lower()
+    return re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+
+
+def _blob_has(blob: str, *needles: str) -> bool:
+    """True if any needle is a full ``_``-delimited segment in blob."""
+    if not blob:
+        return False
+    padded = f"_{blob}_"
+    return any(f"_{needle}_" in padded for needle in needles)
+
+
+def _plan_from_tiers(org_type: str, tiers: str) -> str | None:
+    org_type = org_type.lower().strip()
+    blob = _normalize_tier_blob(org_type, tiers)
+    is_max = org_type in {"claude_max", "max"} or _blob_has(
+        blob, "max", "claude_max"
+    )
+    if is_max:
+        if _blob_has(blob, "20x", "max_20", "max20", "max_20x", "claude_max_20x"):
+            return "Max (20x)"
+        # Boundary-safe: max_5 matches, max_50 does not.
+        if _blob_has(blob, "5x", "max_5", "max5", "max_5x", "claude_max_5x"):
+            return "Max (5x)"
+        if org_type in {"claude_max", "max"} or _blob_has(blob, "claude_max"):
+            return "Max"
+        return None
+    if org_type in {"claude_pro", "claude_ai", "pro"} or _blob_has(
+        blob,
+        "default_claude_ai",
+        "default_claude_pro",
+        "pro",
+        "claude_pro",
+        "claude_ai",
+    ):
+        return "Pro"
+    return None
+
+
+def _plan_from_oauth_account(account: dict[str, Any]) -> str | None:
+    """Plan from ``~/.claude.json`` oauthAccount (updates after upgrades)."""
+    # Prefer the more specific of org vs user tier strings (e.g. max_5 over
+    # a generic org marker), not a simple ``or`` that can hide 5x/20x.
+    org_tiers = str(account.get("organizationRateLimitTier") or "")
+    user_tiers = str(account.get("userRateLimitTier") or "")
+    tiers = " ".join(part for part in (org_tiers, user_tiers) if part)
+    return _plan_from_tiers(str(account.get("organizationType") or ""), tiers)
+
+
+def _plan_from_credentials_oauth(oauth: dict[str, Any]) -> str | None:
+    """Plan from ``.credentials.json`` claudeAiOauth (often stale after upgrades)."""
+    sub = oauth.get("subscriptionType")
+    tiers = str(oauth.get("rateLimitTier") or "")
+    labeled = _plan_from_tiers(str(sub or ""), tiers)
+    if labeled:
+        return labeled
+    return str(sub) if isinstance(sub, str) and sub else None
+
+
+def _plan_family(plan: str | None) -> str | None:
+    """Coarse plan identity for drift — Max / Max 5x / Max 20x are distinct."""
+    if not plan:
+        return None
+    lower = plan.casefold()
+    if "max" in lower and "20" in lower:
+        return "max20"
+    if "max" in lower and "5" in lower:
+        return "max5"
+    if "max" in lower:
+        return "max"
+    if "pro" in lower:
+        return "pro"
+    return lower
+
+
+def _plan_specificity(plan: str | None) -> int:
+    family = _plan_family(plan)
+    if family == "max20":
+        return 3
+    if family == "max5":
+        return 2
+    if family == "max":
+        return 1
+    if family == "pro":
+        return 1
+    return 0
+
+
+def read_plan_sources(auth: AuthConfig) -> tuple[str | None, str | None]:
+    """Return ``(profile_plan, credential_plan)`` from local Claude files."""
+    _, credentials_path, account_paths = _auth_paths(auth)
+    # Prefer more specific plans across candidates; prefer ``.claude.json``
+    # over ``claude.json`` when specificity ties (name ends with .claude.json).
+    profile_plan: str | None = None
+    profile_score = -1
+    for account_path in account_paths:
+        try:
+            with account_path.open(encoding="utf-8") as file:
+                account = (json.load(file) or {}).get("oauthAccount") or {}
+            if not isinstance(account, dict) or not account:
+                continue
+            plan = _plan_from_oauth_account(account)
+            if not plan:
+                continue
+            score = _plan_specificity(plan) * 10
+            if account_path.name == ".claude.json":
+                score += 1
+            if score > profile_score:
+                profile_plan = plan
+                profile_score = score
+        except Exception:
+            continue
+    cred_plan: str | None = None
+    try:
+        with credentials_path.open(encoding="utf-8") as file:
+            oauth = (json.load(file) or {}).get("claudeAiOauth") or {}
+        if isinstance(oauth, dict):
+            cred_plan = _plan_from_credentials_oauth(oauth)
+    except Exception:
+        pass
+    return profile_plan, cred_plan
+
+
+def plan_drift(auth: AuthConfig) -> tuple[str, str] | None:
+    """If profile and credentials disagree on plan family, return both labels."""
+    profile_plan, cred_plan = read_plan_sources(auth)
+    if profile_plan and cred_plan:
+        if _plan_family(profile_plan) == _plan_family(cred_plan):
+            return None
+        return profile_plan, cred_plan
+    # One-sided: profile shows Max* but credentials have no Max plan yet.
+    if profile_plan and _plan_family(profile_plan) in {"max", "max5", "max20"}:
+        if not cred_plan or _plan_family(cred_plan) == "pro":
+            return profile_plan, cred_plan or "unknown"
+    return None
+
+
+def claude_accounts_with_drift(
+    accounts: list[AccountConfig],
+) -> list[tuple[AccountConfig, str, str]]:
+    drifted: list[tuple[AccountConfig, str, str]] = []
+    for account in accounts:
+        if account.provider != "claude" or not account.enabled:
+            continue
+        if auth_mode(account.auth) == "api_key":
+            continue
+        drift = plan_drift(account.auth)
+        if drift is not None:
+            drifted.append((account, drift[0], drift[1]))
+    return drifted
+
+
+def read_account_email(auth: AuthConfig) -> str | None:
+    info = _read_account(auth)
+    email = info.get("email")
+    return email if isinstance(email, str) and email else None
+
+
+def claude_auth_root(auth: AuthConfig) -> str:
+    """Stable key so shared Claude homes are only logged in once."""
+    config_dir, credentials_path, _ = _auth_paths(auth)
+    try:
+        return str(credentials_path.resolve())
+    except OSError:
+        return str(config_dir)
+
+
+def run_subscription_login(auth: AuthConfig, *, email: str | None = None) -> None:
+    """Open Claude Code subscription login (browser). Does not force logout first."""
+    claude_exe = get_claude_exe()
+    if not claude_exe:
+        raise RuntimeError("Couldn't find the Claude Code CLI")
+    cmd = [claude_exe, "auth", "login", "--claudeai"]
+    if email:
+        cmd.extend(["--email", email])
+    # New console for the windowed tray build (console=False); browser OAuth.
+    # Do not redirect stdio — the console may need keyboard (copy URL / Enter).
+    # Caller must not run this on the Tk UI thread.
+    run_kwargs: dict[str, Any] = {
+        "timeout": 300,
+        "env": _usage_environment(auth),
+    }
+    if os.name == "nt":
+        run_kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+    proc = subprocess.run(cmd, **run_kwargs)
+    if proc.returncode != 0:
+        raise RuntimeError(f"claude auth login exited {proc.returncode}")
+
+
 def _read_account(auth: AuthConfig) -> dict[str, str | bool | None]:
     _, credentials_path, account_paths = _auth_paths(auth)
     info: dict[str, str | bool | None] = {
@@ -154,22 +346,33 @@ def _read_account(auth: AuthConfig) -> dict[str, str | bool | None]:
         "plan": None,
         "logged_in": False,
     }
+    profile_plan: str | None = None
     for account_path in account_paths:
         try:
             with account_path.open(encoding="utf-8") as file:
                 account = (json.load(file) or {}).get("oauthAccount") or {}
-            info["name"] = account.get("displayName")
-            info["email"] = account.get("emailAddress")
-            break
+            if not isinstance(account, dict) or not account:
+                continue
+            if info["name"] is None and account.get("displayName"):
+                info["name"] = account.get("displayName")
+            if info["email"] is None and account.get("emailAddress"):
+                info["email"] = account.get("emailAddress")
+            if profile_plan is None:
+                profile_plan = _plan_from_oauth_account(account)
         except Exception:
             continue
     try:
         with credentials_path.open(encoding="utf-8") as file:
             oauth = (json.load(file) or {}).get("claudeAiOauth") or {}
-        info["plan"] = oauth.get("subscriptionType")
+        cred_plan = (
+            _plan_from_credentials_oauth(oauth) if isinstance(oauth, dict) else None
+        )
+        # Profile Max/Pro beats a stale token subscriptionType after upgrades.
+        info["plan"] = profile_plan or cred_plan
         info["logged_in"] = bool(oauth.get("accessToken"))
     except Exception:
-        pass
+        if profile_plan:
+            info["plan"] = profile_plan
     return info
 
 

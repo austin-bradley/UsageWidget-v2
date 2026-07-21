@@ -20,7 +20,7 @@ from core.config import (
     patch_config_profile_display,
     patch_config_toggles,
 )
-from core.models import AppConfig, AppSnapshot
+from core.models import AccountConfig, AppConfig, AppSnapshot
 from core.poller import fetch_all, filter_enabled, merge_last_good, next_poll_seconds
 from core.snapshot_cache import load_snapshot, save_snapshot
 from core.version import APP_NAME, APP_VERSION
@@ -28,6 +28,12 @@ from display.details import build_details
 from display.icon import render_icon
 from display.profiles import get_active_profile
 from display.tooltip import build_tooltip
+from providers.claude import (
+    claude_accounts_with_drift,
+    claude_auth_root,
+    read_account_email,
+    run_subscription_login,
+)
 from tray.details_window import show_details, update_details_text
 from tray.display_options import open_display_options
 from tray.win_notify import get_always_visible, set_always_visible
@@ -93,6 +99,7 @@ class UsageTray:
         self._refresh_pending = False
         self._refresh_done_callbacks: list[Callable[[], None]] = []
         self._last_fetch_error: str | None = None
+        self._fixing_claude_auth = False
 
         menu = pystray.Menu(
             pystray.MenuItem("Show details", self._on_details, default=True),
@@ -239,7 +246,26 @@ class UsageTray:
 
         return handler
 
-    def _details_body(self) -> str:
+    def _claude_drift_note(self) -> str | None:
+        drifted = claude_accounts_with_drift(self.config.accounts)
+        if not drifted:
+            return None
+        lines = [
+            "Claude Code login plan does not match your account "
+            "(common after upgrades):"
+        ]
+        for account, profile_plan, cred_plan in drifted:
+            label = account.label or account.id
+            lines.append(
+                f"  · {label}: account {profile_plan}, "
+                f"Claude Code login {cred_plan}"
+            )
+        lines.append(
+            "Usage % may still be measured against the login plan until updated."
+        )
+        return "\n".join(lines)
+
+    def _details_body(self) -> tuple[str, bool]:
         profile = get_active_profile(self.config)
         with self._state_lock:
             snapshot = self.snapshot
@@ -248,28 +274,137 @@ class UsageTray:
         if awaiting:
             return (
                 f"{self.config.app_name} is still fetching usage…\n\n"
-                "Try Refresh in a moment."
+                "Try Refresh in a moment.",
+                False,
             )
         text = build_details(profile, snapshot)
         if fetch_error:
             text = f"Last refresh failed: {fetch_error}\n\n{text}"
-        return text
+        drift = self._claude_drift_note()
+        if drift:
+            text = f"{text}\n\n⚠ {drift}"
+        return text, drift is not None
 
     def _details_refresh(self) -> None:
         """Kick a coalesced poll; update the details window when it finishes."""
 
         def done() -> None:
-            update_details_text(self._details_body())
+            body, fix_auth = self._details_body()
+            with self._state_lock:
+                fixing = self._fixing_claude_auth
+            # Never re-show Fix during an in-flight login (avoids stuck Checking…).
+            update_details_text(body, fix_auth_visible=fix_auth and not fixing)
 
         self.refresh_async(on_done=done)
 
+    def _fix_claude_auth(self) -> bool:
+        """Start soft-recheck + optional login off the Tk UI thread.
+
+        Returns False when a fix is already in flight (caller should not
+        overwrite the details body with \"Checking…\").
+        """
+        with self._state_lock:
+            if self._fixing_claude_auth:
+                return False
+            self._fixing_claude_auth = True
+        threading.Thread(target=self._fix_claude_auth_worker, daemon=True).start()
+        return True
+
+    def _fix_claude_auth_worker(self) -> None:
+        """Soft-recheck drift; only open browser login if still needed."""
+        try:
+            try:
+                # Soft path: fresh file read (no browser). Cleared if user already
+                # re-logged in Claude Code / Desktop elsewhere.
+                drifted = claude_accounts_with_drift(self.config.accounts)
+                if not drifted:
+                    body, fix_auth = self._details_body()
+                    update_details_text(body, fix_auth_visible=fix_auth)
+                    self._details_refresh()
+                    return
+
+                summary = "\n".join(
+                    f"  · {(account.label or account.id)}: account {profile}, "
+                    f"Claude Code login {cred}"
+                    for account, profile, cred in drifted
+                )
+                if not self._show_messagebox(
+                    "Claude Code login plan does not match your account:\n\n"
+                    f"{summary}\n\n"
+                    "A browser re-login is required to refresh Claude Code limits "
+                    "(token refresh alone does not update plan).\n\n"
+                    "Open Claude login now?",
+                    ask=True,
+                ):
+                    body, fix_auth = self._details_body()
+                    update_details_text(body, fix_auth_visible=fix_auth)
+                    return
+
+                # Re-check after the prompt — user may have fixed login elsewhere.
+                drifted = claude_accounts_with_drift(self.config.accounts)
+                if not drifted:
+                    self._details_refresh()
+                    return
+
+                update_details_text(
+                    "Waiting for Claude login in your browser…",
+                    fix_auth_visible=False,
+                )
+                # One login per shared credentials path.
+                by_root: dict[str, AccountConfig] = {}
+                for account, _profile, _cred in drifted:
+                    by_root.setdefault(claude_auth_root(account.auth), account)
+
+                errors: list[str] = []
+                for account in by_root.values():
+                    label = account.label or account.id
+                    try:
+                        run_subscription_login(
+                            account.auth, email=read_account_email(account.auth)
+                        )
+                    except Exception as error:
+                        errors.append(f"{label}: {error}")
+
+                remaining = claude_accounts_with_drift(self.config.accounts)
+                if errors or remaining:
+                    body, _ = self._details_body()
+                    extra: list[str] = []
+                    if errors:
+                        extra.append(
+                            "Login errors:\n"
+                            + "\n".join(f"  · {e}" for e in errors)
+                        )
+                    if remaining:
+                        extra.append(
+                            "Some accounts still mismatch. Try:\n"
+                            "  claude auth logout && claude auth login --claudeai"
+                        )
+                    update_details_text(
+                        body + "\n\n" + "\n\n".join(extra),
+                        fix_auth_visible=True,
+                    )
+                    return
+                self._details_refresh()
+            except Exception as error:
+                body, fix_auth = self._details_body()
+                update_details_text(
+                    f"{body}\n\nClaude login update failed:\n{error}",
+                    fix_auth_visible=fix_auth,
+                )
+        finally:
+            with self._state_lock:
+                self._fixing_claude_auth = False
+
     def _on_details(self, icon, item):
+        body, fix_auth = self._details_body()
         show_details(
             self.config.app_name,
-            self._details_body(),
+            body,
             on_refresh=self._details_refresh,
             on_copy=_set_clipboard_text,
             on_display_options=lambda: self._on_display_options(None, None),
+            on_fix_auth=self._fix_claude_auth,
+            fix_auth_visible=fix_auth,
         )
 
     def _on_toggle_visible(self, icon, item):
